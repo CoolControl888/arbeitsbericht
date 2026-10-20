@@ -10,7 +10,7 @@ import { verkleinern } from './photos.js';
 import { zeitMinuten, summeMinuten, positionen, summen } from './abrechnung.js';
 import { berichtPdf, rechnungsdaten, dateiname } from './pdf.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -319,6 +319,9 @@ const SEK = {
     titel: 'Kunde',
     info: () => bericht.kunde.name,
     html: () => `
+      ${kunden.length ? `<label class="feld"><span>Kunde aus der Liste wählen</span><select data-aktion="kunde-waehlen">${optionen(
+        [...kunden].sort((x, y) => x.name.localeCompare(y.name, 'de')).map((k) => [k.id, [k.name, k.plzOrt].filter(Boolean).join(' · ')]),
+        kundeZuName(bericht.kunde.name)?.id || '', `${kunden.length} Kunden …`)}</select></label>` : ''}
       ${feld('Firma / Name', 'kunde.name', { ph: 'z. B. Schanzenbäckerei', liste: 'dl-kunden', attr: 'autocapitalize="words" autocomplete="off"' })}
       <div class="reihe2">${feld('Ansprechpartner', 'kunde.ansprechpartner', { attr: 'autocapitalize="words"' })}${feld('Telefon', 'kunde.telefon', { typ: 'tel' })}</div>
       ${feld('Straße, Nr.', 'kunde.strasse', { attr: 'autocapitalize="words"' })}
@@ -633,6 +636,18 @@ async function beiAenderung(e) {
     bericht[liste].push({ bezeichnung: k.bezeichnung, menge: '1', einheit: k.einheit, preis: k.preis === null ? '' : zahl(k.preis, 2) });
     geaendert();
     neuSektion(liste);
+    return;
+  }
+  if (a === 'kunde-waehlen') {
+    const k = kunden.find((x) => x.id === t.value);
+    if (k) {
+      bericht.kunde = { ...bericht.kunde, name: k.name };
+      for (const f of ['ansprechpartner', 'telefon', 'strasse', 'plzOrt', 'email']) bericht.kunde[f] = k[f] || '';
+      geaendert();
+      neuSektion('kunde');
+      neuSektion('anlage');
+      toast('Kundendaten übernommen');
+    }
     return;
   }
   if (a === 'anlage-waehlen') {
