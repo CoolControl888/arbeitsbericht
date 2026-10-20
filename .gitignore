@@ -1,0 +1,3 @@
+test/ausgabe/
+__pycache__/
+*.pyc
