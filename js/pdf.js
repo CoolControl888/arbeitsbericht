@@ -402,6 +402,7 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
   const angaben = [];
   if ((bericht.auftragsart || []).length) angaben.push(['Einsatz', bericht.auftragsart.join(', ')]);
   if (voll(bericht.einsatzort)) angaben.push(['Einsatzort', bericht.einsatzort]);
+  if (voll(bericht.kostenstelle)) angaben.push(['Kostenstelle', bericht.kostenstelle]);
   const geraet = [
     [a.bezeichnung, voll(a.art) && a.art !== a.bezeichnung ? `(${a.art})` : ''].filter(voll).join(' '),
     [a.hersteller, a.typ].filter(voll).join(' '),

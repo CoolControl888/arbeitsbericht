@@ -10,7 +10,7 @@ import { verkleinern } from './photos.js';
 import { zeitMinuten, summeMinuten, positionen, summen } from './abrechnung.js';
 import { berichtPdf, rechnungsdaten, dateiname } from './pdf.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -204,7 +204,7 @@ export function leererBericht(nr) {
     id: uid(), v: 1, nr, status: 'entwurf', erstellt: jetzt, geaendert: jetzt,
     datum: heute(),
     kunde: { name: '', ansprechpartner: '', telefon: '', strasse: '', plzOrt: '', email: '' },
-    einsatzort: '',
+    einsatzort: '', kostenstelle: '',
     anlage: { bezeichnung: '', art: '', hersteller: '', typ: '', seriennr: '', kaeltemittel: '', fuellmenge: '' },
     auftragsart: [], auftragNr: '', monteur: einst.monteur, helfer: '',
     zeiten: [{ id: uid(), person: 'Monteur', art: 'Arbeit', von: '', bis: '', pause: '' }],
@@ -327,7 +327,13 @@ const SEK = {
       ${feld('Straße, Nr.', 'kunde.strasse', { attr: 'autocapitalize="words"' })}
       ${feld('PLZ Ort', 'kunde.plzOrt', { attr: 'autocapitalize="words"' })}
       ${feld('E-Mail für den Bericht', 'kunde.email', { typ: 'email', attr: 'autocapitalize="off"' })}
-      ${feld('Einsatzort, falls abweichend', 'einsatzort', { ph: 'z. B. Filiale, Adresse, Raum' })}`,
+      ${(() => {
+        const st = kundeZuName(bericht.kunde.name)?.standorte || [];
+        return st.length ? `<label class="feld"><span>Filiale / Kostenstelle wählen</span><select data-aktion="standort-waehlen">${optionen(
+          st.map((s, i) => [String(i), [s.name, s.kostenstelle && `KSt ${s.kostenstelle}`].filter(Boolean).join(' · ')]), '', `${st.length} bekannt …`)}</select></label>` : '';
+      })()}
+      ${feld('Einsatzort / Filiale, falls abweichend', 'einsatzort', { ph: 'z. B. Filiale Brooktorkai 22, Raum' })}
+      ${feld('Kostenstelle (nur wenn der Kunde eine vorgibt)', 'kostenstelle')}`,
   },
   anlage: {
     titel: 'Anlage / Gerät',
@@ -638,6 +644,19 @@ async function beiAenderung(e) {
     neuSektion(liste);
     return;
   }
+  if (a === 'standort-waehlen') {
+    const s = kundeZuName(bericht.kunde.name)?.standorte?.[Number(t.value)];
+    if (s) {
+      const teile = [s.name, s.strasse, s.plzOrt].map((x) => String(x || '').trim()).filter(Boolean);
+      bericht.einsatzort = teile.filter((x, i) => !teile.slice(0, i).some((y) => y.includes(x))).join(', ');
+      bericht.kostenstelle = s.kostenstelle || '';
+      bericht.fastbillKst = s.fastbillKst || '';   // für die Rechnung in FastBill, steht nicht im Bericht
+      geaendert();
+      neuSektion('kunde');
+      toast('Filiale übernommen');
+    }
+    return;
+  }
   if (a === 'kunde-waehlen') {
     const k = kunden.find((x) => x.id === t.value);
     if (k) {
@@ -776,6 +795,13 @@ async function kundeMerken() {
       : 'bz:' + String(x.bezeichnung || '').trim().toLowerCase() + '|' + String(x.typ || '').trim().toLowerCase());
     const i = eintrag.anlagen.findIndex((x) => schl(x) === schl(a));
     if (i >= 0) eintrag.anlagen[i] = { ...a }; else eintrag.anlagen.push({ ...a });
+  }
+  const ort = String(bericht.einsatzort || '').trim();
+  const kst = String(bericht.kostenstelle || '').trim();
+  if (ort || kst) {
+    eintrag.standorte = eintrag.standorte || [];
+    const i = eintrag.standorte.findIndex((s) => String(s.name || '').trim().toLowerCase() === ort.toLowerCase() && String(s.kostenstelle || '') === kst);
+    if (i < 0) eintrag.standorte.push({ name: ort, kostenstelle: kst });
   }
   eintrag.zuletzt = bericht.datum;
   await db.put('kunden', eintrag);
@@ -1198,6 +1224,11 @@ async function kundenImport(input) {
     if (!name) continue;
     const alt = kundeZuName(name) || { id: uid(), name, anlagen: [] };
     const neu = { ...alt, ...Object.fromEntries(Object.entries(k).filter(([, v]) => v !== '' && v !== null && v !== undefined)), id: alt.id, name };
+    neu.standorte = [...(alt.standorte || [])];
+    for (const s of k.standorte || []) {
+      const key = (x) => `${String(x.name || '').trim().toLowerCase()}|${x.kostenstelle || ''}`;
+      if (!neu.standorte.some((x) => key(x) === key(s))) neu.standorte.push(s);
+    }
     neu.anlagen = [...(alt.anlagen || [])];
     for (const a of k.anlagen || []) {
       const i = neu.anlagen.findIndex((x) => (a.seriennr && x.seriennr === a.seriennr) || (!a.seriennr && x.bezeichnung === a.bezeichnung));
