@@ -10,7 +10,7 @@ import { verkleinern } from './photos.js';
 import { zeitMinuten, summeMinuten, positionen, summen } from './abrechnung.js';
 import { berichtPdf, rechnungsdaten, dateiname } from './pdf.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.3.1';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -167,6 +167,10 @@ async function zeigeListe() {
     const b = e.target.closest('[data-aktion]');
     if (!b) return;
     if (b.dataset.aktion === 'neu') neuerBericht();
+    if (b.dataset.aktion === 'liste-loeschen') {
+      const ber = alle.find((x) => x.id === b.dataset.id);
+      if (ber && await berichtEntfernen(ber)) zeigeListe();
+    }
     if (b.dataset.aktion === 'installieren' && installHinweis) {
       installHinweis.prompt();
       installHinweis = null;
@@ -195,7 +199,7 @@ function karte(b) {
   return `<li class="karte" data-text="${esc(text)}"><a href="#/bericht/${encodeURIComponent(b.id)}">
     <div class="karte-zeile"><strong>${esc(b.kunde?.name || 'Ohne Kunde')}</strong><span class="badge ${s.klasse}">${s.text}</span></div>
     <div class="karte-unter">${esc(b.nr)} · ${esc(datumDe(b.datum))}${b.anlage?.bezeichnung ? ' · ' + esc(b.anlage.bezeichnung) : ''}</div>
-  </a></li>`;
+  </a><button type="button" class="karte-weg" data-aktion="liste-loeschen" data-id="${esc(b.id)}" aria-label="Bericht ${esc(b.nr)} löschen">${ICON.muell}</button></li>`;
 }
 
 export function leererBericht(nr) {
@@ -1034,19 +1038,29 @@ async function kundeSenden(p = null) {
   berechnungen();
 }
 
+// Fragt nach und löscht Bericht + Fotos. true, wenn gelöscht.
+async function berichtEntfernen(b) {
+  const text = b.status === 'unterschrieben' || b.unterschrift
+    ? `Bericht ${b.nr} (${b.kunde?.name || 'ohne Kunde'}) ist schon unterschrieben. Wirklich löschen? Fotos und Unterschrift gehen verloren.`
+    : `Bericht ${b.nr} (${b.kunde?.name || 'ohne Kunde'}) mit allen Fotos löschen?`;
+  if (!(await bestaetigen(text, 'Löschen', 'Behalten', true))) return false;
+  try {
+    for (const f of await db.alle('fotos')) if (f.berichtId === b.id) await db.weg('fotos', f.id);
+    await db.weg('berichte', b.id);
+  } catch (e) {
+    toast('Löschen hat nicht geklappt: ' + (e.message || e));
+    return false;
+  }
+  toast('Bericht gelöscht');
+  return true;
+}
+
 async function berichtLoeschen() {
-  const text = gesperrt()
-    ? `Bericht ${bericht.nr} ist schon unterschrieben. Wirklich löschen? Fotos und Unterschrift gehen verloren.`
-    : `Bericht ${bericht.nr} mit allen Fotos löschen?`;
-  if (!(await bestaetigen(text, 'Löschen', 'Behalten', true))) return;
-  const id = bericht.id;
-  for (const f of fotos) await db.weg('fotos', f.id);
-  await db.weg('berichte', id);
+  if (!(await berichtEntfernen(bericht))) return;
   fotos.forEach((f) => URL.revokeObjectURL(f.url));
   fotos = [];
   bericht = null;
   location.hash = '#/';
-  toast('Bericht gelöscht');
 }
 
 // ---------------------------------------------------------------- Einstellungen
