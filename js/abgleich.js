@@ -9,7 +9,9 @@ import { blobZuDataUrl, dataUrlZuBlob } from './util.js';
 const META = 'abgleich';                       // Schlüssel im Speicher „einstellungen“
 const ALT = '2000-01-01T00:00:00.000Z';        // für Daten aus der Zeit vor dem Abgleich
 const NUR_HIER = ['geraet', 'nrNaechste', 'nrJahr'];   // Einstellungen, die nur für dieses Gerät gelten
-const PAKET_BYTES = 3 * 1024 * 1024;
+// Kleine Pakete: Google legt jede Datei einzeln an, große Pakete brechen ab
+const PAKET_BYTES = 1024 * 1024;
+const PAKET_DATEIEN = 20;
 const HOLEN_JE_RUNDE = 15;
 
 export async function meta() {
@@ -198,7 +200,7 @@ async function durchgang({ offeneId = null, berichtAendern = null } = {}) {
       const inhalt = await inhaltFuer(n, hier[n], m);
       if (!inhalt) continue;
       const text = JSON.stringify(inhalt);
-      if (groesse + text.length > PAKET_BYTES) await senden();
+      if (paket.length >= PAKET_DATEIEN || groesse + text.length > PAKET_BYTES) await senden();
       paket.push({ name: n, g: hier[n], inhalt: text });
       groesse += text.length;
     }

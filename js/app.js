@@ -14,7 +14,7 @@ import {
   versandVormerken, wartendeVersandIds,
 } from './abgleich.js';
 
-export const VERSION = '1.5.0';
+export const VERSION = '1.5.1';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
