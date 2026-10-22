@@ -15,7 +15,20 @@ export function summeMinuten(bericht, takt, filter = () => true) {
   return (bericht.zeiten || []).filter(filter).reduce((s, z) => s + zeitMinuten(z, takt), 0);
 }
 
-const istHelfer = (z) => z.person === 'Helfer';
+const istHelfer = (z) => String(z.person || '').includes('Helfer');
+
+// Wie viele Monteure / Helfer laut Zeiten vor Ort waren (jede Person hat eigene Zeilen)
+export function personal(bericht) {
+  const z = (bericht.zeiten || []).filter((x) => x.von || x.bis);
+  const monteure = new Set(z.filter((x) => !istHelfer(x)).map((x) => x.person || 'Monteur')).size;
+  const helfer = new Set(z.filter(istHelfer).map((x) => x.person)).size;
+  return { monteure, helfer };
+}
+
+export function personalText({ monteure, helfer }) {
+  return [monteure ? `${monteure} ${monteure === 1 ? 'Monteur' : 'Monteure'}` : '', helfer ? `${helfer} ${helfer === 1 ? 'Helfer' : 'Helfer'}` : '']
+    .filter(Boolean).join(', ');
+}
 
 export function positionen(bericht, einst) {
   const kat = (id) => (einst.katalog || []).find((k) => k.id === id);
@@ -25,12 +38,14 @@ export function positionen(bericht, einst) {
   const minMonteur = summeMinuten(bericht, takt, (z) => !istHelfer(z));
   if (minMonteur > 0) {
     const k = kat('lohn') || { bezeichnung: 'Arbeitszeit', einheit: 'Std.', preis: null };
-    pos.push({ bezeichnung: k.bezeichnung, menge: minMonteur / 60, einheit: k.einheit, preis: k.preis, herkunft: 'Zeiten' });
+    const n = personal(bericht).monteure;
+    pos.push({ bezeichnung: k.bezeichnung + (n > 1 ? ` (${n} Monteure)` : ''), menge: minMonteur / 60, einheit: k.einheit, preis: k.preis, herkunft: 'Zeiten' });
   }
   const minHelfer = summeMinuten(bericht, takt, istHelfer);
   if (minHelfer > 0) {
     const k = kat('helfer') || { bezeichnung: 'Helfer', einheit: 'Std.', preis: null };
-    pos.push({ bezeichnung: k.bezeichnung, menge: minHelfer / 60, einheit: k.einheit, preis: k.preis, herkunft: 'Zeiten' });
+    const n = personal(bericht).helfer;
+    pos.push({ bezeichnung: k.bezeichnung + (n > 1 ? ` (${n} Helfer)` : ''), menge: minHelfer / 60, einheit: k.einheit, preis: k.preis, herkunft: 'Zeiten' });
   }
 
   const an = bericht.anfahrt || {};

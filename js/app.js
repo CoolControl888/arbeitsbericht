@@ -10,7 +10,7 @@ import { verkleinern } from './photos.js';
 import { zeitMinuten, summeMinuten, positionen, summen } from './abrechnung.js';
 import { berichtPdf, rechnungsdaten, dateiname } from './pdf.js';
 
-export const VERSION = '1.3.1';
+export const VERSION = '1.4.0';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -376,7 +376,7 @@ const SEK = {
         ${bericht.zeiten.map((z, i) => `
           <div class="zeile" data-i="${i}">
             <div class="reihe3">
-              ${auswahl('Person', `zeiten.${i}.person`, ['Monteur', 'Helfer'])}
+              ${auswahl('Person', `zeiten.${i}.person`, LISTEN.personen)}
               ${auswahl('Art', `zeiten.${i}.art`, ['Arbeit', 'Fahrt'])}
               ${feld('Pause min', `zeiten.${i}.pause`, { modus: 'numeric', ph: '0' })}
             </div>
@@ -384,7 +384,12 @@ const SEK = {
             <div class="zeile-fuss"><span class="stunden" data-std="${i}"></span>
               <button type="button" class="mini gefahr" data-aktion="weg" data-liste="zeiten" data-i="${i}">entfernen</button></div>
           </div>`).join('')}
-        <button type="button" class="btn klein" data-aktion="neu" data-liste="zeiten">${ICON.plus} Zeitzeile</button>
+        <div class="knopfreihe">
+          <button type="button" class="btn klein" data-aktion="neu" data-liste="zeiten">${ICON.plus} Zeitzeile</button>
+          <button type="button" class="btn klein" data-aktion="zweite-person" data-person="2. Monteur">${ICON.plus} 2. Monteur, gleiche Zeiten</button>
+          <button type="button" class="btn klein" data-aktion="zweite-person" data-person="Helfer">${ICON.plus} Helfer, gleiche Zeiten</button>
+        </div>
+        <p class="hinweis-klein">Jede Person bekommt eigene Zeilen. So steht im Bericht, wie viele vor Ort waren, und jede Stunde wird abgerechnet.</p>
         <p class="summe" id="zeit-summe"></p>
         <label class="feld"><span>Anfahrt</span><select data-f="anfahrt.katalogId" data-render="zeiten">${optionen(an, bericht.anfahrt.katalogId, 'keine / nicht berechnen')}</select></label>
         ${istKm ? feld('Gefahrene km', 'anfahrt.km', { modus: 'decimal' }) : ''}`;
@@ -707,6 +712,16 @@ async function beiKlick(e) {
     b.classList.toggle('an', i < 0);
     geaendert();
     berechnungen();
+  } else if (a === 'zweite-person') {
+    const ziel = b.dataset.person;
+    if (bericht.zeiten.some((z) => z.person === ziel)) return toast(`Für „${ziel}“ gibt es schon Zeiten.`);
+    const vorlage = bericht.zeiten.filter((z) => (z.person || 'Monteur') === 'Monteur' && (z.von || z.bis));
+    if (!vorlage.length) return toast('Erst die Zeiten des Monteurs eintragen.');
+    for (const z of vorlage) bericht.zeiten.push({ ...z, id: uid(), person: ziel });
+    geaendert();
+    neuSektion('zeiten');
+    berechnungen();
+    toast(`Zeiten für „${ziel}“ übernommen. Bei Bedarf anpassen.`);
   } else if (a === 'baustein') {
     const ta = $('[data-f="arbeiten"]');
     const alt = String(bericht.arbeiten || '').replace(/\s+$/, '');

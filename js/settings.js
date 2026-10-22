@@ -64,6 +64,8 @@ export const STANDARD = {
 };
 
 export const LISTEN = {
+  // Personen in den Zeiten: jede Person eigene Zeilen, damit klar ist, wie viele vor Ort waren
+  personen: ['Monteur', '2. Monteur', '3. Monteur', 'Helfer', '2. Helfer'],
   // Messwerte vorher/nachher; neg: Eingabe mit Minuszeichen (Temperaturen)
   messwerte: [
     { id: 'hd', name: 'Hochdruck (Verflüssigung)', einheit: 'bar' },

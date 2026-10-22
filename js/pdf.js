@@ -3,7 +3,7 @@
 // Freiwillige Felder erscheinen nur, wenn etwas eingetragen ist.
 
 import { datumDe, zeitstempelDe, zahl, menge, slug, blobZuDataUrl, parseZahl } from './util.js';
-import { zeitMinuten, summeMinuten } from './abrechnung.js';
+import { zeitMinuten, summeMinuten, personal, personalText } from './abrechnung.js';
 import { LISTEN } from './settings.js';
 
 const BLAU = [0, 113, 188];
@@ -108,8 +108,9 @@ class Satz {
   }
 
   // Gesperrte Überschrift mit hellgrauer Linie darunter
-  ueberschrift(t) {
-    this.platz(28);   // Überschrift nie allein am Seitenende
+  // danach: Platz in mm, den der folgende Block braucht (Überschrift nie allein am Seitenende)
+  ueberschrift(t, danach = 18) {
+    this.platz(10 + Math.min(danach, 150));
     this.y += 6;
     this.schrift(9.5, true);
     this.doc.text(pdfText(t.toUpperCase()), L, this.y, { charSpace: 0.9 });
@@ -214,6 +215,7 @@ class Satz {
       this.y += h;
       this.linie(L, this.y, R, this.y, LINIE);
     };
+    // Kurze Tabellen nicht zerreißen: passt sie auf eine neue Seite, aber nicht mehr hierher, gleich umbrechen
     this.platz((lh + pad * 2) * 2);
     kopfZeichnen();
     zeilen.forEach((zeile, zi) => {
@@ -410,6 +412,8 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
   if (geraet) angaben.push(['Anlage / Gerät', geraet]);
   if (voll(a.seriennr)) angaben.push(['Serien-Nr.', a.seriennr]);
   if (voll(a.kaeltemittel)) angaben.push(['Kältemittel', a.kaeltemittel]);
+  const vorOrt = personalText(personal(bericht));
+  if (vorOrt) angaben.push(['Personal vor Ort', vorOrt]);
   if (angaben.length) s.angaben(angaben);
 
   const arbeiten = zeilenText(bericht.arbeiten);
@@ -429,7 +433,7 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
     .map((g) => [g.name, String(mw[g.id]?.vorher ?? '').trim(), String(mw[g.id]?.nachher ?? '').trim(), g.einheit])
     .filter(([, v, n]) => v || n);
   if (messzeilen.length) {
-    s.ueberschrift('Messwerte');
+    s.ueberschrift('Messwerte', (messzeilen.length + 1) * 6);
     s.tabelle([
       { titel: 'Messgröße', breite: 82 },
       { titel: 'vorher', breite: 34, rechts: true },
@@ -441,9 +445,9 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
   const takt = Number(einst.takt) || 0;
   const zeiten = (bericht.zeiten || []).filter((z) => z.von || z.bis);
   if (zeiten.length) {
-    s.ueberschrift('Arbeitszeiten');
+    s.ueberschrift('Arbeitszeiten', (zeiten.length + 2) * 6);
     const zeilen = zeiten.map((z) => [
-      z.person === 'Helfer' ? 'Helfer' : 'Monteur',
+      z.person || 'Monteur',
       z.art || 'Arbeit',
       z.von || '',
       z.bis || '',
@@ -469,7 +473,7 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
 
   const material = (bericht.material || []).filter((m) => voll(m.bezeichnung));
   if (material.length) {
-    s.ueberschrift('Material');
+    s.ueberschrift('Material', (material.length + 1) * 6);
     s.tabelle([
       { titel: 'Menge', breite: 20, rechts: true },
       { titel: 'Einheit', breite: 24 },
@@ -480,7 +484,7 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
   const km = (bericht.kaeltemittel || []).filter((x) => voll(x.typ) || voll(x.menge));
   const d = bericht.dichtheit || {};
   if (km.length || d.durchgefuehrt === 'ja') {
-    s.ueberschrift('Kältemittel und Dichtheitskontrolle');
+    s.ueberschrift('Kältemittel und Dichtheitskontrolle', (km.length + 1) * 6 + (d.durchgefuehrt === 'ja' ? 20 : 0));
     if (km.length) {
       s.tabelle([
         { titel: 'Vorgang', breite: 62 },
