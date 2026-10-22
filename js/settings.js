@@ -7,6 +7,7 @@ export const STANDARD = {
   monteur: 'Kerem Volkan Giris',
   zertifikat: 'Kat. I, Nr. 007 0021 2021 1',
   nrPraefix: 'AB',
+  geraet: '',        // Kürzel dieses Geräts in der Nummer (Handy leer, Lenovo L, Tablet T), nur hier gespeichert
   nrJahr: null,
   nrNaechste: 1,
   takt: 15,
@@ -115,18 +116,40 @@ export async function ladeEinstellungen() {
   return { ...structuredClone(STANDARD), ...gespeichert };
 }
 
-export async function speichereEinstellungen(e) {
+// mitZeit: false bei reinen Gerätewerten (Nummernzähler), damit der Abgleich die Einstellungen
+// der anderen Geräte nicht mit einer alten Fassung überschreibt
+export async function speichereEinstellungen(e, { mitZeit = true } = {}) {
+  if (mitZeit) e.geaendert = new Date().toISOString();
   await db.put('einstellungen', e, SCHLUESSEL);
 }
 
-// Fortlaufende Berichtsnummer je Jahr: AB-2026-001. Unabhängig von FastBill-Rechnungsnummern.
+const geraetKuerzel = (e) => String(e.geraet || '').trim().toUpperCase();
+
+// Fortlaufende Berichtsnummer je Jahr und Gerät: AB-2026-001 (Handy), AB-2026-L001 (Lenovo).
+// Unabhängig von FastBill-Rechnungsnummern.
 export async function naechsteNummer(e, jahr = new Date().getFullYear()) {
   if (e.nrJahr !== jahr) {
     e.nrJahr = jahr;
     e.nrNaechste = 1;
   }
-  const nr = `${e.nrPraefix || 'AB'}-${jahr}-${String(e.nrNaechste).padStart(3, '0')}`;
+  const nr = `${e.nrPraefix || 'AB'}-${jahr}-${geraetKuerzel(e)}${String(e.nrNaechste).padStart(3, '0')}`;
   e.nrNaechste += 1;
-  await speichereEinstellungen(e);
+  await speichereEinstellungen(e, { mitZeit: false });
   return nr;
+}
+
+// Nach dem Abgleich: Zähler hinter die höchste vorhandene Nummer dieses Geräts setzen
+export async function nummerNachziehen(e, berichte, jahr = new Date().getFullYear()) {
+  const praefix = (e.nrPraefix || 'AB').replace(/[^A-Za-z0-9]/g, '\\$&');
+  const muster = new RegExp(`^${praefix}-${jahr}-${geraetKuerzel(e)}(\\d+)$`);
+  let max = 0;
+  for (const b of berichte) {
+    const m = muster.exec(b.nr || '');
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  if (e.nrJahr !== jahr) return false;
+  if (max + 1 <= (e.nrNaechste || 1)) return false;
+  e.nrNaechste = max + 1;
+  await speichereEinstellungen(e, { mitZeit: false });
+  return true;
 }

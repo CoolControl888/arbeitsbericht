@@ -4,13 +4,17 @@ import {
   debounce, toast, lies, setze, blobZuDataUrl, dataUrlZuBlob, herunterladen,
 } from './util.js';
 import { db } from './db.js';
-import { ladeEinstellungen, speichereEinstellungen, naechsteNummer, LISTEN, STANDARD } from './settings.js';
+import { ladeEinstellungen, speichereEinstellungen, naechsteNummer, nummerNachziehen, LISTEN, STANDARD } from './settings.js';
 import { Unterschrift } from './signature.js';
 import { verkleinern } from './photos.js';
 import { zeitMinuten, summeMinuten, positionen, summen } from './abrechnung.js';
 import { berichtPdf, rechnungsdaten, dateiname } from './pdf.js';
+import {
+  abgleichen, meta as abgleichMeta, verbunden, verbinden, verbindungLesen, trennen, merkeWeg,
+  versandVormerken, wartendeVersandIds,
+} from './abgleich.js';
 
-export const VERSION = '1.4.0';
+export const VERSION = '1.5.0';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -50,7 +54,10 @@ async function start() {
   window.addEventListener('hashchange', route);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && speichern.offen()) speichern.sofort();
+    if (document.visibilityState === 'visible') abgleichPlanen(500);
   });
+  window.addEventListener('online', () => abgleichPlanen(500));
+  setInterval(() => abgleichPlanen(0), 3 * 60 * 1000);
   document.addEventListener('toggle', (e) => {
     if (e.target.matches?.('details[data-sek]')) sekOffen[e.target.dataset.sek] = e.target.open;
   }, true);
@@ -62,6 +69,45 @@ async function start() {
   swRegistrieren();
   await route();
   document.body.dataset.bereit = '1';
+  abgleichPlanen(1000);
+}
+
+// ---------------------------------------------------------------- Abgleich mit den anderen Geräten
+
+let abgleichTimer = null;
+
+function abgleichPlanen(ms = 8000) {
+  clearTimeout(abgleichTimer);
+  abgleichTimer = setTimeout(abgleichJetzt, ms);
+}
+
+async function abgleichJetzt({ meldung = false } = {}) {
+  clearTimeout(abgleichTimer);
+  if (!(await verbunden())) return;
+  if (bericht && speichern.offen()) await speichern.sofort();
+  const r = await abgleichen({ offeneId: bericht?.id || null, berichtAendern });
+  if (r.einstellungen) einst = await ladeEinstellungen();
+  if (r.berichte && await nummerNachziehen(einst, await db.alle('berichte'))) einst = await ladeEinstellungen();
+  if (meldung) toast(r.fehler ? 'Abgleich hat nicht geklappt: ' + r.fehler : r.offline ? 'Kein Internet. Der Abgleich läuft, sobald du online bist.' : 'Abgeglichen.');
+  const h = location.hash || '#/';
+  const tippt = document.activeElement?.matches?.('input, textarea, select');
+  if (h === '#/') { if (!tippt) zeigeListe(); } else if (h === '#/einstellungen') { if (!tippt) zeigeEinstellungen(); }
+  else if (bericht && (r.berichte || r.gesendet)) berechnungen();
+}
+
+// Bericht ändern, auch wenn er gerade offen ist (z. B. Quittung „Kopie gesendet“ vom PC)
+async function berichtAendern(id, fn) {
+  if (bericht && bericht.id === id) {
+    fn(bericht);
+    geaendert();
+    await speichern.sofort();
+    return;
+  }
+  const b = await db.get('berichte', id);
+  if (!b) return;
+  fn(b);
+  b.geaendert = new Date().toISOString();
+  await db.put('berichte', b);
 }
 
 async function route() {
@@ -155,18 +201,26 @@ function unterschriftHolen({ titel, oben = '', name = '', mitName = true, hinwei
 async function zeigeListe() {
   kopf('Arbeitsberichte', false);
   const alle = (await db.alle('berichte')).sort((a, b) => `${b.datum}|${b.nr}`.localeCompare(`${a.datum}|${a.nr}`));
+  const wartend = await wartendeVersandIds();
+  const am = await abgleichMeta();
+  const abgleichZeile = am.url
+    ? `<p class="abgleich-zeile ${am.fehler ? 'fehler' : ''}">${am.fehler ? `Abgleich: ${esc(am.fehler)}` : am.zuletzt ? `Abgeglichen ${esc(zeitstempelDe(am.zuletzt))}` : 'Noch nicht abgeglichen'}${wartend.size ? ` · ${wartend.size} ${wartend.size > 1 ? 'Kopien warten' : 'Kopie wartet'} auf Internet` : ''}
+        · <button type="button" class="link" data-aktion="abgleich">jetzt abgleichen</button></p>`
+    : '';
   ansicht().innerHTML = `
     <section class="liste">
       <button type="button" class="btn primaer gross breit" data-aktion="neu">${ICON.plus} Neuer Arbeitsbericht</button>
+      ${abgleichZeile}
       ${installHinweis ? `<button type="button" class="btn breit" data-aktion="installieren">${ICON.laden} App auf den Startbildschirm legen</button>` : ''}
       ${alle.length ? '<input type="search" class="suche" placeholder="Suchen: Kunde, Nummer, Anlage" aria-label="Suchen">' : ''}
-      <ul class="karten">${alle.map(karte).join('')}</ul>
+      <ul class="karten">${alle.map((b) => karte(b, wartend)).join('')}</ul>
       ${alle.length ? '' : '<p class="leer">Noch keine Berichte.<br>Tippe auf „Neuer Arbeitsbericht“.</p>'}
     </section>`;
   ansicht().onclick = async (e) => {
     const b = e.target.closest('[data-aktion]');
     if (!b) return;
     if (b.dataset.aktion === 'neu') neuerBericht();
+    if (b.dataset.aktion === 'abgleich') abgleichJetzt({ meldung: true });
     if (b.dataset.aktion === 'liste-loeschen') {
       const ber = alle.find((x) => x.id === b.dataset.id);
       if (ber && await berichtEntfernen(ber)) zeigeListe();
@@ -185,7 +239,10 @@ async function zeigeListe() {
   ansicht().onchange = null;
 }
 
-function statusInfo(b) {
+function statusInfo(b, wartend = new Set()) {
+  const vk = b.versandKunde;
+  if (vk?.status === 'fehler') return { text: 'Versand fehlgeschlagen', klasse: 'rot' };
+  if (vk?.status === 'wartet') return wartend.has(b.id) ? { text: 'Kopie wartet auf Internet', klasse: 'orange' } : { text: 'Kopie geht vom PC raus', klasse: 'blau' };
   if (b.geteiltKunde && b.geteiltBuero) return { text: 'Kunde + Büro', klasse: 'gruen' };
   if (b.geteiltKunde) return { text: 'an Kunden geteilt', klasse: 'gruen' };
   if (b.status === 'unterschrieben' || b.geteiltBuero) return { text: 'Kopie an Kunde fehlt', klasse: 'rot' };
@@ -193,8 +250,8 @@ function statusInfo(b) {
   return { text: 'Entwurf', klasse: 'grau' };
 }
 
-function karte(b) {
-  const s = statusInfo(b);
+function karte(b, wartend) {
+  const s = statusInfo(b, wartend);
   const text = [b.nr, b.kunde?.name, b.anlage?.bezeichnung, b.anlage?.typ, datumDe(b.datum)].join(' ').toLowerCase();
   return `<li class="karte" data-text="${esc(text)}"><a href="#/bericht/${encodeURIComponent(b.id)}">
     <div class="karte-zeile"><strong>${esc(b.kunde?.name || 'Ohne Kunde')}</strong><span class="badge ${s.klasse}">${s.text}</span></div>
@@ -239,6 +296,7 @@ async function speichernJetzt() {
   await db.put('berichte', bericht);
   const s = $('#speicherstatus');
   if (s) s.textContent = 'gespeichert';
+  abgleichPlanen();
 }
 
 function geaendert() {
@@ -637,7 +695,11 @@ function beiEingabe(e) {
   }
 }
 
-const fotoSpeichern = debounce((f) => { const { url, ...rec } = f; db.put('fotos', rec); }, 400);
+const fotoSpeichern = debounce((f) => {
+  f.geaendert = new Date().toISOString();
+  const { url, ...rec } = f;
+  db.put('fotos', rec);
+}, 400);
 
 async function beiAenderung(e) {
   const t = e.target;
@@ -804,7 +866,9 @@ async function kundeMerken() {
   const k = bericht.kunde;
   const name = String(k.name || '').trim();
   if (name.length < 2) return;
-  const eintrag = kundeZuName(name) || { id: uid(), name, anlagen: [] };
+  const bekannt = kundeZuName(name);
+  const vorher = bekannt ? JSON.stringify(bekannt) : '';
+  const eintrag = bekannt || { id: uid(), name, anlagen: [] };
   eintrag.name = name;
   for (const f of ['ansprechpartner', 'telefon', 'strasse', 'plzOrt', 'email']) eintrag[f] = k[f] || eintrag[f] || '';
   const a = bericht.anlage;
@@ -823,6 +887,7 @@ async function kundeMerken() {
     if (i < 0) eintrag.standorte.push({ name: ort, kostenstelle: kst });
   }
   eintrag.zuletzt = bericht.datum;
+  if (JSON.stringify(eintrag) !== vorher) eintrag.geaendert = new Date().toISOString();
   await db.put('kunden', eintrag);
   kunden = await db.alle('kunden');
 }
@@ -837,7 +902,8 @@ async function fotosHinzu(input) {
   for (const d of dateien) {
     try {
       const { blob, w, h } = await verkleinern(d);
-      const rec = { id: uid(), berichtId: bericht.id, blob, w, h, titel: '', nr: (fotos[fotos.length - 1]?.nr || 0) + 1, erstellt: new Date().toISOString() };
+      const jetzt = new Date().toISOString();
+      const rec = { id: uid(), berichtId: bericht.id, blob, w, h, titel: '', nr: (fotos[fotos.length - 1]?.nr || 0) + 1, erstellt: jetzt, geaendert: jetzt };
       await db.put('fotos', rec);
       fotos.push({ ...rec, url: URL.createObjectURL(blob) });
     } catch (err) {
@@ -854,6 +920,7 @@ async function fotoLoeschen(id) {
   URL.revokeObjectURL(fotos[i].url);
   fotos.splice(i, 1);
   await db.weg('fotos', id);
+  await merkeWeg(['f_' + id]);
   geaendert();
   neuSektion('fotos');
 }
@@ -968,11 +1035,15 @@ async function senden() {
   try { p = await pdfHolen(); } finally { fertig(); }
   const mail = bericht.kunde.email;
   const s = summen(positionen(bericht, einst), einst.ust);
+  const ueberPc = await verbunden();
+  const vorgemerkt = bericht.versandKunde?.status === 'wartet';
+  const kundeInfo = bericht.geteiltKunde ? ' · schon geschickt' : vorgemerkt ? ' · ist vorgemerkt' : ' · Pflicht';
   const wahl = await dialog(`
     <div class="dlg">
       <h2>Senden</h2>
       <div class="wahl">
-        <button type="button" class="btn ${bericht.geteiltKunde ? '' : 'primaer'}" data-k="kunde">${ICON.kunde}<span>Kopie per Mail an den Kunden${bericht.geteiltKunde ? ' ✓' : ''}<small>${mail ? esc(mail) : 'E-Mail-Adresse wird abgefragt'} · nur PDF${bericht.geteiltKunde ? ' · schon geschickt' : ' · Pflicht'}</small></span></button>
+        <button type="button" class="btn ${bericht.geteiltKunde || vorgemerkt ? '' : 'primaer'}" data-k="kunde">${ICON.kunde}<span>Kopie per Mail an den Kunden${bericht.geteiltKunde ? ' ✓' : ''}<small>${mail ? esc(mail) : 'E-Mail-Adresse wird abgefragt'} · nur PDF${kundeInfo}${ueberPc ? ' · geht vom PC über info@ raus, auch wenn du gerade offline bist' : ''}</small></span></button>
+        ${ueberPc ? `<button type="button" class="btn" data-k="kunde-selbst">${ICON.senden}<span>Kopie selbst mit der Mail-App senden<small>Teilen-Menü wie bisher</small></span></button>` : ''}
         <button type="button" class="btn" data-k="buero">${ICON.buero}<span>Ins Büro<small>PDF + Rechnungsdaten · in Drive ablegen oder an info@ mailen</small></span></button>
         <button type="button" class="btn" data-k="laden">${ICON.laden}<span>PDF auf dem Handy speichern<small>${esc(p.name)}</small></span></button>
       </div>
@@ -983,10 +1054,10 @@ async function senden() {
   if (!wahl || wahl === 'zu') return;
   const pdfDatei = new File([p.blob], p.name, { type: 'application/pdf' });
 
-  if (wahl === 'kunde') {
-    await kundeSenden(p);
+  if (wahl === 'kunde' || wahl === 'kunde-selbst') {
+    await kundeSenden(p, { selbst: wahl === 'kunde-selbst' });
   } else if (wahl === 'buero') {
-    if (!bericht.geteiltKunde && await bestaetigen('Der Kunde hat noch keine Kopie. Zuerst die Kopie per Mail an den Kunden senden?', 'Erst an den Kunden', 'Nur ins Büro')) {
+    if (!bericht.geteiltKunde && bericht.versandKunde?.status !== 'wartet' && await bestaetigen('Der Kunde hat noch keine Kopie. Zuerst die Kopie per Mail an den Kunden senden?', 'Erst an den Kunden', 'Nur ins Büro')) {
       await kundeSenden(p);
     }
     const pos = positionen(bericht, einst);
@@ -1011,7 +1082,7 @@ async function senden() {
 }
 
 // Kopie des Berichts per Mail an den Kunden: fragt die Adresse ab, wenn sie fehlt, und merkt sich den Versand
-async function kundeSenden(p = null) {
+async function kundeSenden(p = null, { selbst = false } = {}) {
   let mail = String(bericht.kunde.email || '').trim();
   if (!mail) {
     mail = await dialog(`
@@ -1039,6 +1110,21 @@ async function kundeSenden(p = null) {
     const fertig = warten('PDF wird erstellt …');
     try { p = await pdfHolen(); } finally { fertig(); }
   }
+  if (!selbst && await verbunden()) {
+    // Vormerken: der Abgleich bringt die Kopie in den Ausgang, der PC verschickt sie von info@coolcontrol.online
+    const angefordert = new Date().toISOString();
+    await versandVormerken({
+      berichtId: bericht.id, nr: bericht.nr, an: mail, betreff: vorlage(einst.mailBetreff), text: vorlage(einst.mailText),
+      pdfName: p.name, pdfDataUrl: await blobZuDataUrl(p.blob), angefordert, geraet: einst.geraet || '',
+    });
+    bericht.versandKunde = { an: mail, angefordert, status: 'wartet' };
+    geaendert();
+    await speichern.sofort();
+    toast(navigator.onLine ? `Kopie an ${mail} geht raus. Der PC schickt sie von info@coolcontrol.online.` : `Kopie an ${mail} ist vorgemerkt und geht raus, sobald du online bist.`, 5000);
+    abgleichJetzt();
+    berechnungen();
+    return;
+  }
   const pdfDatei = new File([p.blob], p.name, { type: 'application/pdf' });
   try { await navigator.clipboard.writeText(mail); } catch { /* egal */ }
   const r = await teilen([pdfDatei], vorlage(einst.mailBetreff), vorlage(einst.mailText));
@@ -1060,8 +1146,10 @@ async function berichtEntfernen(b) {
     : `Bericht ${b.nr} (${b.kunde?.name || 'ohne Kunde'}) mit allen Fotos löschen?`;
   if (!(await bestaetigen(text, 'Löschen', 'Behalten', true))) return false;
   try {
-    for (const f of await db.alle('fotos')) if (f.berichtId === b.id) await db.weg('fotos', f.id);
+    const weg = ['b_' + b.id];
+    for (const f of await db.alle('fotos')) if (f.berichtId === b.id) { await db.weg('fotos', f.id); weg.push('f_' + f.id); }
     await db.weg('berichte', b.id);
+    await merkeWeg(weg);
   } catch (e) {
     toast('Löschen hat nicht geklappt: ' + (e.message || e));
     return false;
@@ -1080,8 +1168,13 @@ async function berichtLoeschen() {
 
 // ---------------------------------------------------------------- Einstellungen
 
+// Felder, die nur für dieses Gerät gelten, ändern den Stand für den Abgleich nicht
+const GERAET_FELDER = new Set(['geraet', 'nrNaechste']);
+let einstZuletzt = '';
+
 const einstSpeichern = debounce(async () => {
-  await speichereEinstellungen(einst);
+  await speichereEinstellungen(einst, { mitZeit: !GERAET_FELDER.has(einstZuletzt) });
+  abgleichPlanen();
   const s = $('#speicherstatus');
   if (s) s.textContent = 'gespeichert';
 }, 400);
@@ -1101,6 +1194,9 @@ async function zeigeEinstellungen() {
   kunden = await db.alle('kunden');
   const dauerhaft = await navigator.storage?.persisted?.();
   const platz = await navigator.storage?.estimate?.();
+  const am = await abgleichMeta();
+  const geraete = [['', 'Handy (Nummern AB-…-001)'], ['L', 'Lenovo (AB-…-L001)'], ['T', 'Tablet (AB-…-T001)']];
+  if (einst.geraet && !geraete.some(([k]) => k === einst.geraet)) geraete.push([einst.geraet, `Kürzel ${einst.geraet}`]);
   const typen = [['lohn', 'Lohn Monteur'], ['helfer', 'Lohn Helfer'], ['anfahrt', 'Anfahrt pauschal'], ['km', 'Anfahrt je km'], ['material', 'Material / Pauschale']];
   ansicht().innerHTML = `
     <form class="einstellungen" autocomplete="off" onsubmit="return false">
@@ -1154,15 +1250,32 @@ async function zeigeEinstellungen() {
       </div></details>
 
       <details class="karte-sek"><summary><span>Kunden und Anlagen</span><span class="sek-info">${kunden.length}</span></summary><div class="inhalt">
-        <p class="hinweis-klein">Die App merkt sich Kunden und Anlagen aus deinen Berichten. Eine Liste aus dem Büro kannst du hier einspielen.</p>
+        <p class="hinweis-klein">Die App merkt sich Kunden und Anlagen aus deinen Berichten. Eine Liste aus dem Büro kannst du hier einspielen${am.url ? ', aber nur auf einem Gerät. Die anderen bekommen sie über den Abgleich' : ''}.</p>
         <ul class="kundenliste">${kunden.sort((a, b) => a.name.localeCompare(b.name)).map((k) => `
           <li><span><strong>${esc(k.name)}</strong><small>${esc([k.plzOrt, k.anlagen?.length ? `${k.anlagen.length} Anlage(n)` : ''].filter(Boolean).join(' · '))}</small></span>
           <button type="button" class="mini gefahr" data-aktion="kunde-weg" data-id="${esc(k.id)}">entfernen</button></li>`).join('')}</ul>
         <label class="btn klein">${ICON.laden} Kundenliste einspielen (.json)<input type="file" accept=".json,.txt,application/json,text/plain" data-aktion="kunden-import" hidden></label>
       </div></details>
 
+      <details class="karte-sek"><summary><span>Abgleich zwischen den Geräten</span><span class="sek-info">${am.url ? (am.fehler ? 'Fehler' : 'an') : 'aus'}</span></summary><div class="inhalt">
+        <label class="feld"><span>Welches Gerät ist das?</span><select data-e="geraet">${optionen(geraete, einst.geraet || '')}</select></label>
+        <p class="hinweis-klein">Jedes Gerät zählt seine Berichtsnummern selbst. Das Kürzel sorgt dafür, dass keine Nummer doppelt vorkommt.</p>
+        ${am.url ? `
+          <p>Verbunden mit deinem Google Drive (Ordner „Arbeitsbericht-Abgleich“). ${am.zuletzt ? `Zuletzt abgeglichen: ${esc(zeitstempelDe(am.zuletzt))}.` : ''}</p>
+          ${am.fehler ? `<p class="offen">Letzter Versuch: ${esc(am.fehler)}</p>` : ''}
+          <p class="hinweis-klein">Berichte, Fotos, Kunden und Einstellungen gleichen sich mit den anderen Geräten ab, sobald Internet da ist. Kopien an Kunden verschickt der PC von info@coolcontrol.online.</p>
+          <div class="knopfreihe">
+            <button type="button" class="btn klein" data-aktion="abgleich">Jetzt abgleichen</button>
+            <button type="button" class="btn klein" data-aktion="trennen">Verbindung trennen</button>
+          </div>` : `
+          <p>Handy, Lenovo und Tablet bekommen denselben Stand über dein Google Drive. Dafür einmal die Verbindungsdatei einspielen. Sie liegt in Drive im Ordner „Arbeitsbericht-Abgleich“.</p>
+          <label class="btn klein">${ICON.laden} Verbindungsdatei einspielen<input type="file" accept=".json,.txt,application/json,text/plain" data-aktion="verbindung-datei" hidden></label>
+          <label class="feld"><span>oder den Inhalt hier einfügen</span><textarea data-verbindung rows="3" placeholder='{"format":"cc-arbeitsbericht-verbindung/1", …}'></textarea></label>
+          <button type="button" class="btn klein" data-aktion="verbinden">Verbinden</button>`}
+      </div></details>
+
       <details class="karte-sek"><summary><span>Daten und Sicherung</span></summary><div class="inhalt">
-        <p>Alle Berichte, Fotos und Unterschriften liegen nur auf diesem Handy, bis du sie teilst.</p>
+        <p>${am.url ? 'Berichte, Fotos und Unterschriften liegen auf diesem Gerät und in deinem Google Drive.' : 'Alle Berichte, Fotos und Unterschriften liegen nur auf diesem Gerät, bis du sie teilst.'}</p>
         <p class="hinweis-klein">Speicher: ${platz ? `${zahl((platz.usage || 0) / 1048576, 1)} MB belegt` : 'unbekannt'} ·
           ${dauerhaft ? 'dauerhaft gespeichert ✓' : 'Android darf die Daten bei Platzmangel löschen'}</p>
         ${dauerhaft ? '' : '<button type="button" class="btn klein" data-aktion="persist">Dauerhaft speichern anfordern</button>'}
@@ -1191,6 +1304,7 @@ async function zeigeEinstellungen() {
       else if (p === 'ust') v = parseZahl(v) ?? 0;
       setze(einst, p, v);
     }
+    einstZuletzt = p;
     $('#speicherstatus').textContent = '…';
     einstSpeichern();
   };
@@ -1199,6 +1313,11 @@ async function zeigeEinstellungen() {
     const a = t.dataset.aktion;
     if (a === 'kunden-import') await kundenImport(t);
     if (a === 'einspielen') await sicherungEinspielen(t);
+    if (a === 'verbindung-datei') {
+      const datei = t.files?.[0];
+      t.value = '';
+      if (datei) await verbindungHerstellen(await datei.text());
+    }
   };
   ansicht().onclick = async (e) => {
     const b = e.target.closest('[data-aktion]');
@@ -1217,7 +1336,7 @@ async function zeigeEinstellungen() {
       await speichereEinstellungen(einst); await zeigeEinstellungen(); oeffne('Abrechnung');
     } else if (a === 'kunde-weg') {
       if (await bestaetigen('Diesen Kunden aus der Vorschlagsliste entfernen? Berichte bleiben erhalten.', 'Entfernen', 'Abbrechen', true)) {
-        await db.weg('kunden', b.dataset.id); await zeigeEinstellungen(); oeffne('Kunden');
+        await db.weg('kunden', b.dataset.id); await merkeWeg(['k_' + b.dataset.id]); await zeigeEinstellungen(); oeffne('Kunden');
       }
     } else if (a === 'persist') {
       const ok = await navigator.storage?.persist?.();
@@ -1225,11 +1344,36 @@ async function zeigeEinstellungen() {
       zeigeEinstellungen();
     } else if (a === 'sicherung') {
       await sicherungHerunterladen();
+    } else if (a === 'verbinden') {
+      await verbindungHerstellen($('[data-verbindung]')?.value || '');
+    } else if (a === 'abgleich') {
+      await abgleichJetzt({ meldung: true });
+    } else if (a === 'trennen') {
+      if (await bestaetigen('Abgleich auf diesem Gerät ausschalten? Die Daten bleiben hier und in Drive erhalten.', 'Ausschalten', 'Abbrechen', true)) {
+        await trennen();
+        await zeigeEinstellungen();
+        oeffne('Abgleich');
+      }
     } else if (a === 'update') {
       const reg = await navigator.serviceWorker?.getRegistration();
       if (reg) { await reg.update(); toast(reg.installing || reg.waiting ? 'Update wird geladen …' : 'Du hast die neueste Version.'); }
     }
   };
+}
+
+async function verbindungHerstellen(text) {
+  let v;
+  try { v = verbindungLesen(text); } catch (e) { return toast('Das ist keine Verbindungsdatei: ' + e.message); }
+  const fertig = warten('Verbinde mit Google Drive …');
+  try {
+    await verbinden(v);
+  } catch (e) {
+    return toast('Verbindung klappt nicht: ' + (e.message || e));
+  } finally { fertig(); }
+  toast('Verbunden. Der erste Abgleich läuft …');
+  await abgleichJetzt({ meldung: true });
+  await zeigeEinstellungen();
+  oeffne('Abgleich');
 }
 
 function oeffne(titelAnfang) {
@@ -1258,6 +1402,7 @@ async function kundenImport(input) {
       const key = (x) => `${String(x.name || '').trim().toLowerCase()}|${x.kostenstelle || ''}`;
       if (!neu.standorte.some((x) => key(x) === key(s))) neu.standorte.push(s);
     }
+    neu.geaendert = new Date().toISOString();
     neu.anlagen = [...(alt.anlagen || [])];
     for (const a of k.anlagen || []) {
       const i = neu.anlagen.findIndex((x) => (a.seriennr && x.seriennr === a.seriennr) || (!a.seriennr && x.bezeichnung === a.bezeichnung));

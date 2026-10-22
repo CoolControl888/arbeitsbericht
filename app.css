@@ -88,6 +88,9 @@ main { max-width: 720px; margin: 0 auto; padding: 12px; }
 .badge.blau { background: var(--eis); color: var(--blau); }
 .badge.gruen { background: #e2f2e8; color: var(--gruen); }
 .badge.rot { background: #fdecea; color: var(--rot); }
+.badge.orange { background: #fff3e0; color: var(--orange); }
+.abgleich-zeile { margin: 10px 2px 0; font-size: 13px; color: #546e7a; }
+.abgleich-zeile.fehler { color: var(--rot); }
 .mess-titel { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
 .leer { text-align: center; color: var(--grau); margin: 40px 0; }
 
