@@ -151,7 +151,7 @@ export function abgleichen(opt = {}) {
   return laeuft;
 }
 
-async function durchgang({ offeneId = null, berichtAendern = null } = {}) {
+async function durchgang({ offeneId = null, berichtAendern = null, fortschritt = () => {} } = {}) {
   const m = await meta();
   if (!m.url || !m.schluessel) return { aus: true };
   if (!navigator.onLine) return { offline: true };
@@ -176,6 +176,7 @@ async function durchgang({ offeneId = null, berichtAendern = null } = {}) {
 
     // 3. Neueres von den anderen Geräten holen
     for (let i = 0; i < holen.length; i += HOLEN_JE_RUNDE) {
+      fortschritt(`Hole ${i + 1}–${Math.min(i + HOLEN_JE_RUNDE, holen.length)} von ${holen.length} …`);
       const teil = holen.slice(i, i + HOLEN_JE_RUNDE);
       const { dateien } = await anfrage(v, 'holen', { namen: teil });
       for (const n of teil) {
@@ -190,9 +191,12 @@ async function durchgang({ offeneId = null, berichtAendern = null } = {}) {
     // 4. Eigenes ablegen, in Paketen
     let paket = [];
     let groesse = 0;
+    let fertig = 0;
     const senden = async () => {
       if (!paket.length) return;
+      fortschritt(`Lade ${fertig + 1}–${fertig + paket.length} von ${ablegen.length} hoch …`);
       await anfrage(v, 'ablegen', { dateien: paket });
+      fertig += paket.length;
       paket = [];
       groesse = 0;
     };

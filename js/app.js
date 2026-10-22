@@ -14,7 +14,7 @@ import {
   versandVormerken, wartendeVersandIds,
 } from './abgleich.js';
 
-export const VERSION = '1.5.1';
+export const VERSION = '1.5.2';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -85,7 +85,13 @@ async function abgleichJetzt({ meldung = false } = {}) {
   clearTimeout(abgleichTimer);
   if (!(await verbunden())) return;
   if (bericht && speichern.offen()) await speichern.sofort();
-  const r = await abgleichen({ offeneId: bericht?.id || null, berichtAendern });
+  const zeigen = (text) => {
+    const z = $('.abgleich-zeile');
+    if (z) z.firstChild.textContent = 'Abgleich läuft: ' + text + ' ';
+    if (meldung) toast('Abgleich läuft: ' + text, 60000);
+  };
+  if (meldung) toast('Abgleich läuft …', 60000);
+  const r = await abgleichen({ offeneId: bericht?.id || null, berichtAendern, fortschritt: zeigen });
   if (r.einstellungen) einst = await ladeEinstellungen();
   if (r.berichte && await nummerNachziehen(einst, await db.alle('berichte'))) einst = await ladeEinstellungen();
   if (meldung) toast(r.fehler ? 'Abgleich hat nicht geklappt: ' + r.fehler : r.offline ? 'Kein Internet. Der Abgleich läuft, sobald du online bist.' : 'Abgeglichen.');
