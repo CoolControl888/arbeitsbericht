@@ -1,5 +1,5 @@
 // Offline-Speicher der App. Bei jeder neuen Version VERSION erhöhen, sonst lädt das Handy die alte.
-const VERSION = 'cc-ab-1.5.2';
+const VERSION = 'cc-ab-1.5.3';
 
 const DATEIEN = [
   './',

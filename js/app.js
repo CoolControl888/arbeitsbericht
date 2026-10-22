@@ -14,7 +14,7 @@ import {
   versandVormerken, wartendeVersandIds,
 } from './abgleich.js';
 
-export const VERSION = '1.5.2';
+export const VERSION = '1.5.3';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -32,6 +32,8 @@ const ICON = {
 };
 
 const ansicht = () => $('#ansicht');
+// Handy/Tablet mit Android oder iOS: „Foto aufnehmen“ öffnet die Kamera-App. Am Laptop (Lenovo) eigene Kamera-Ansicht.
+const HANDY = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 let einst;
 let bericht = null;
@@ -279,7 +281,7 @@ export function leererBericht(nr) {
     arbeiten: '', material: [], kaeltemittel: [],
     dichtheit: { durchgefuehrt: 'nein', methode: '', ergebnis: '', massnahme: '' },
     pruefungen: [], messwerte: {},
-    befund: '', offen: '', betriebsbereit: '',
+    befund: '', offen: '', betriebsbereit: '', wartungEmpfohlen: '',
     zusatz: [], rechnungshinweis: '',
     unterschrift: null, monteurUnterschrift: null, geteiltKunde: null, geteiltBuero: null,
   };
@@ -542,6 +544,8 @@ const SEK = {
     html: () => `
       ${textfeld('Befund und Hinweise an den Kunden', 'befund', { zeilen: 3, ph: 'z. B. Türdichtung rissig, Tausch empfohlen' })}
       ${textfeld('Offen / Folgetermin', 'offen', { zeilen: 2 })}
+      ${feld('Nächste Wartung empfohlen bis', 'wartungEmpfohlen', { typ: 'date' })}
+      <p class="hinweis-klein">Steht im Bericht für den Kunden. Das Büro-Fenster erinnert rechtzeitig daran.</p>
       ${auswahl('Anlage bei Abschluss betriebsbereit?', 'betriebsbereit', ['ja', 'nein', 'eingeschränkt'], { leer: 'keine Angabe' })}`,
   },
   fotos: {
@@ -549,7 +553,8 @@ const SEK = {
     info: () => (fotos.length ? `${fotos.length}` : ''),
     html: () => `
       <div class="knopfreihe">
-        <label class="btn">${ICON.kamera} Foto aufnehmen<input type="file" accept="image/*" capture="environment" data-aktion="foto" hidden></label>
+        ${HANDY ? `<label class="btn">${ICON.kamera} Foto aufnehmen<input type="file" accept="image/*" capture="environment" data-aktion="foto" hidden></label>`
+          : `<button type="button" class="btn" data-aktion="kamera">${ICON.kamera} Foto aufnehmen</button>`}
         <label class="btn">${ICON.bild} Aus Galerie<input type="file" accept="image/*" multiple data-aktion="foto" hidden></label>
       </div>
       <div class="fotos">${fotos.map((f, i) => `
@@ -809,6 +814,8 @@ async function beiKlick(e) {
     bericht[b.dataset.liste].splice(Number(b.dataset.i), 1);
     geaendert();
     neuSektion(b.dataset.liste);
+  } else if (a === 'kamera') {
+    await kameraFotos();
   } else if (a === 'foto-weg') {
     if (await bestaetigen('Dieses Foto löschen?', 'Löschen', 'Behalten', true)) await fotoLoeschen(b.dataset.id);
   } else if (a === 'unterschreiben') {
@@ -903,6 +910,10 @@ async function kundeMerken() {
 async function fotosHinzu(input) {
   const dateien = [...(input.files || [])];
   input.value = '';
+  await fotosSpeichern(dateien);
+}
+
+async function fotosSpeichern(dateien) {
   if (!dateien.length) return;
   if (dateien.length > 1) toast(`${dateien.length} Fotos werden verarbeitet …`);
   for (const d of dateien) {
@@ -918,6 +929,73 @@ async function fotosHinzu(input) {
   }
   geaendert();
   neuSektion('fotos');
+}
+
+// Kamera im Browser (Laptop): Vorschau, Auslöser, Kamera wechseln. Mehrere Fotos nacheinander möglich.
+async function kameraFotos() {
+  if (!navigator.mediaDevices?.getUserMedia) return toast('Dieser Browser kann die Kamera nicht öffnen. Bitte „Aus Galerie“ nehmen.');
+  let strom = null;
+  let geraete = [];
+  let nr = 0;
+  const neu = [];
+  const starten = async (video) => {
+    strom?.getTracks().forEach((t) => t.stop());
+    const wahl = geraete[nr]?.deviceId;
+    strom = await navigator.mediaDevices.getUserMedia({
+      video: wahl ? { deviceId: { exact: wahl }, width: { ideal: 1920 } } : { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } },
+      audio: false,
+    });
+    video.srcObject = strom;
+    await video.play().catch(() => {});
+  };
+  await dialog(`
+    <div class="dlg dlg-kamera">
+      <h2>Foto aufnehmen</h2>
+      <div class="kamera-feld"><video playsinline muted></video></div>
+      <p class="hinweis-klein" data-k="info">Kamera wird geöffnet …</p>
+      <div class="dlg-knoepfe">
+        <button type="button" class="btn" data-k="wechseln" hidden>Kamera wechseln</button>
+        <button type="button" class="btn" data-k="fertig">Fertig</button>
+        <button type="button" class="btn primaer" data-k="ausloesen">${ICON.kamera} Auslösen</button>
+      </div>
+    </div>`, async (dlg, schliessen) => {
+    const video = dlg.querySelector('video');
+    const info = dlg.querySelector('[data-k="info"]');
+    const ende = () => { strom?.getTracks().forEach((t) => t.stop()); schliessen(true); };
+    dlg.querySelector('[data-k="fertig"]').onclick = ende;
+    dlg.oncancel = (e) => { e.preventDefault(); ende(); };
+    try {
+      await starten(video);
+      geraete = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      const aktiv = strom.getVideoTracks()[0]?.getSettings().deviceId;
+      nr = Math.max(0, geraete.findIndex((d) => d.deviceId === aktiv));
+      dlg.querySelector('[data-k="wechseln"]').hidden = geraete.length < 2;
+      info.textContent = 'Typenschild nicht vergessen.';
+    } catch (e) {
+      info.textContent = e.name === 'NotAllowedError'
+        ? 'Kamera nicht erlaubt. Oben in der Adresszeile auf das Kamera-Symbol klicken und „Zulassen“ wählen.'
+        : 'Kamera lässt sich nicht öffnen: ' + (e.message || e.name);
+      return;
+    }
+    dlg.querySelector('[data-k="wechseln"]').onclick = async () => {
+      nr = (nr + 1) % geraete.length;
+      try { await starten(video); } catch (e) { toast('Kamera lässt sich nicht wechseln: ' + (e.message || e.name)); }
+    };
+    dlg.querySelector('[data-k="ausloesen"]').onclick = async () => {
+      if (!video.videoWidth) return;
+      const c = document.createElement('canvas');
+      c.width = video.videoWidth;
+      c.height = video.videoHeight;
+      c.getContext('2d').drawImage(video, 0, 0);
+      const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.92));
+      if (!blob) return toast('Foto konnte nicht aufgenommen werden.');
+      neu.push(blob);
+      info.textContent = `${neu.length} Foto${neu.length > 1 ? 's' : ''} aufgenommen. Weiter fotografieren oder „Fertig“.`;
+      video.classList.add('blitz');
+      setTimeout(() => video.classList.remove('blitz'), 150);
+    };
+  }, { gross: true });
+  await fotosSpeichern(neu);
 }
 
 async function fotoLoeschen(id) {

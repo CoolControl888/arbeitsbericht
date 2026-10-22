@@ -42,7 +42,7 @@ def zeichnen(page, canvas_sel):
 def geraet(browser, handy):
     ctx = browser.new_context(
         viewport={"width": 412, "height": 915} if handy else {"width": 1280, "height": 800},
-        is_mobile=handy, has_touch=True, locale="de-DE", accept_downloads=True,
+        is_mobile=handy, has_touch=True, locale="de-DE", accept_downloads=True, permissions=["camera"],
         user_agent=("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36"
                     if handy else None),
     )
@@ -80,7 +80,8 @@ def abgleich(page):
 def main():
     shutil.rmtree(KASTEN, ignore_errors=True)
     with sync_playwright() as p:
-        browser = p.chromium.launch(channel="chrome", headless=True)
+        browser = p.chromium.launch(channel="chrome", headless=True,
+                                    args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"])
         hctx, handy, hkons = geraet(browser, True)
         lctx, lenovo, lkons = geraet(browser, False)
 
@@ -123,6 +124,17 @@ def main():
         lenovo.select_option('[data-aktion="kunde-waehlen"]', label="Abgleich Testkunde GmbH")
         check("Kunde vom Handy in der Auswahl", lenovo.input_value('[data-f="kunde.email"]') == "kunde@example.com")
         lenovo.fill('[data-f="arbeiten"]', "Verflüssiger gereinigt")
+        check("Lenovo: Kamera-Knopf statt Dateiauswahl", lenovo.locator('[data-aktion="kamera"]').count() == 1)
+        lenovo.click('[data-aktion="kamera"]')
+        lenovo.wait_for_function("(() => { const v = document.querySelector('dialog[open] video'); return v && v.videoWidth > 0; })()", timeout=15000)
+        lenovo.click('dialog[open] [data-k="ausloesen"]')
+        lenovo.wait_for_timeout(300)
+        lenovo.click('dialog[open] [data-k="ausloesen"]')
+        lenovo.wait_for_function("document.querySelector('dialog[open] [data-k=info]').textContent.startsWith('2 Fotos')")
+        lenovo.screenshot(path=AUS / "abgleich_0_kamera.png")
+        lenovo.click('dialog[open] [data-k="fertig"]')
+        lenovo.wait_for_function("document.querySelectorAll('.foto img').length === 2", timeout=15000)
+        check("Kamera: 2 Fotos aufgenommen", lenovo.locator(".foto").count() == 2)
         lctx.set_offline(True)
         lenovo.click('.aktionsleiste [data-aktion="unterschreiben"]')
         lenovo.wait_for_selector("dialog[open] canvas")
@@ -192,7 +204,7 @@ def main():
         abgleich(lenovo)
         check("Gelöschter Bericht auch am Lenovo weg", nr_handy not in lenovo.inner_text(".karten"))
         fotos = lenovo.evaluate("async () => { const { db } = await import('./js/db.js'); return (await db.alle('fotos')).length; }")
-        check("Foto auch weg", fotos == 0, str(fotos))
+        check("Foto vom Handy-Bericht weg, Kamera-Fotos bleiben", fotos == 2, str(fotos))
 
         lenovo.goto(URL + "#/einstellungen")
         lenovo.wait_for_selector('[data-e="geraet"]', state="attached")

@@ -504,9 +504,10 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
     if (voll(einst.zertifikat)) s.absatz(`F-Gase-Personenzertifikat ${einst.zertifikat}`, { groesse: 8 });
   }
 
-  if (voll(bericht.befund)) {
+  if (voll(bericht.befund) || voll(bericht.wartungEmpfohlen)) {
     s.ueberschrift('Befund und Hinweise');
-    s.hinweis(bericht.befund);
+    if (voll(bericht.befund)) s.hinweis(bericht.befund);
+    if (voll(bericht.wartungEmpfohlen)) s.absatz(`Nächste Wartung empfohlen bis ${datumDe(bericht.wartungEmpfohlen)}.`);
   }
   if (voll(bericht.offen) || bericht.betriebsbereit) {
     s.ueberschrift('Offen / Folgetermin');
