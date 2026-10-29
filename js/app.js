@@ -14,7 +14,7 @@ import {
   versandVormerken, wartendeVersandIds,
 } from './abgleich.js';
 
-export const VERSION = '1.5.3';
+export const VERSION = '1.5.4';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -1054,6 +1054,7 @@ async function unterschreiben() {
   await speichern.sofort();
   await kundeMerken();
   renderBericht();
+  await bueroKopieVormerken();
   if (await bestaetigen('Unterschrieben. Jetzt die Kopie per Mail an den Kunden senden?', 'Kopie senden', 'Später')) {
     await kundeSenden();
   } else {
@@ -1062,6 +1063,21 @@ async function unterschreiben() {
 }
 
 // PDF und Senden ----------------------------------------------------
+
+// Unterschriebener Bericht geht automatisch als PDF ins Büro (Drive-Briefkasten → PC legt ihn in Serviceberichte ab),
+// „Ins Büro“ muss Volkan nicht mehr antippen (Volkan 29.10.2026). Die Rechnungsdaten rechnet das Büro-Fenster selbst.
+async function bueroKopieVormerken() {
+  if (!(await verbunden())) return;
+  let p;
+  const fertig = warten('PDF fürs Büro wird erstellt …');
+  try { p = await pdfHolen(); } catch (e) { fertig(); toast('PDF fürs Büro ging nicht: ' + (e.message || e)); return; } finally { fertig(); }
+  const angefordert = new Date().toISOString();
+  await versandVormerken({
+    berichtId: bericht.id, nr: bericht.nr, an: 'buero', zweck: 'buero', betreff: `Arbeitsbericht ${bericht.nr}`, text: '',
+    pdfName: p.name, pdfDataUrl: await blobZuDataUrl(p.blob), angefordert, geraet: einst.geraet || '',
+  });
+  abgleichJetzt();
+}
 
 async function pdfHolen() {
   if (pdfVorrat && pdfVorrat.stand === bericht.geaendert) return pdfVorrat;

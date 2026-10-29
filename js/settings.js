@@ -53,7 +53,7 @@ export const STANDARD = {
   katalog: [
     { id: 'lohn', typ: 'lohn', bezeichnung: 'Arbeitszeit Servicetechniker + Fahrtzeit', einheit: 'Std.', preis: 91 },
     { id: 'helfer', typ: 'helfer', bezeichnung: 'Montagehelfer Servicetechniker 2', einheit: 'Std.', preis: 59 },
-    { id: 'ab1', typ: 'anfahrt', bezeichnung: 'Fahrzeugkosten pauschal AB1 Hamburg', einheit: 'pausch.', preis: 49 },
+    { id: 'ab1', typ: 'anfahrt', bezeichnung: 'Fahrzeugkosten Hamburg AB', einheit: 'pausch.', preis: 120 },
     { id: 'ib', typ: 'anfahrt', bezeichnung: 'Fahrzeugkosten Hamburg IB', einheit: 'pausch.', preis: 79 },
     { id: 'km', typ: 'km', bezeichnung: 'gefahrene km', einheit: 'km', preis: 1.7 },
     { id: 'klein', typ: 'material', bezeichnung: 'Kleinmaterial / Material zur elektrischen Verdrahtung', einheit: 'pausch.', preis: 19.9 },

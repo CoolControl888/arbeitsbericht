@@ -65,7 +65,8 @@ export async function merkeWeg(namen) {
 // Kopie an den Kunden vormerken. Geht raus, sobald das Gerät online ist.
 export async function versandVormerken(eintrag) {
   await metaAendern((m) => {
-    m.ausgang = (m.ausgang || []).filter((x) => x.berichtId !== eintrag.berichtId);
+    // je Bericht ein Eintrag pro Zweck (Kopie an den Kunden, Kopie ins Büro)
+    m.ausgang = (m.ausgang || []).filter((x) => x.berichtId !== eintrag.berichtId || (x.zweck || '') !== (eintrag.zweck || ''));
     m.ausgang.push(eintrag);
   });
 }
@@ -213,6 +214,15 @@ async function durchgang({ offeneId = null, berichtAendern = null, fortschritt =
     // 5. Quittungen vom HP: Kopie an den Kunden ist raus (oder fehlgeschlagen)
     for (const q of fern.quittungen || []) {
       const b = await db.get('berichte', q.berichtId);
+      if (q.zweck === 'buero') {   // Kopie ins Büro ist am PC abgelegt
+        if (b && q.status === 'gesendet' && b.geteiltBuero !== q.gesendet) {
+          const f = (x) => { x.geteiltBuero = q.gesendet; };
+          if (berichtAendern) await berichtAendern(q.berichtId, f);
+          else { f(b); b.geaendert = new Date().toISOString(); await db.put('berichte', b); }
+          ergebnis.berichte = true;
+        }
+        continue;
+      }
       const vk = b?.versandKunde;
       if (!vk || vk.angefordert !== q.angefordert || vk.status === q.status) continue;
       const aendern = (x) => {
