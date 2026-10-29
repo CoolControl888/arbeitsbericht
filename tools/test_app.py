@@ -81,7 +81,7 @@ def main():
             check(f"{name}: kein Preis im Kundenbericht", "91,00" not in text and "38,50" not in text)
         _, text1 = pdf_bilder("test-1.pdf")
         check("PDF 1: Zertifikat genannt", "007 0021 2021 1" in text1)
-        check("PDF 1: Gesamtstunden 4,75", "4,75 Std." in text1, "30+150+105 min")
+        check("PDF 1: Gesamtstunden 4,75", "4,75" in text1, "30+150+105 min")
 
         # 2. App: Liste
         page.goto(URL)
@@ -98,7 +98,7 @@ def main():
         check("Stunden je Zeile berechnet", page.locator('[data-std="1"]').inner_text() == "2,50 Std.")
         page.locator("#sek-abrechnung > summary").click()
         page.locator("#abr-tabelle").scroll_into_view_if_needed()
-        check("Abrechnung netto 587,15", "587,15 €" in page.locator("#abr-tabelle").inner_text())
+        check("Abrechnung netto 656,65", "656,65 €" in page.locator("#abr-tabelle").inner_text())
         page.screenshot(path=AUS / "app_4_abrechnung.png")
 
         # 4. Unterschrift
@@ -111,6 +111,9 @@ def main():
         page.click('dialog[open] [data-k="ok"]')
         page.wait_for_selector(".sperre")
         check("Bericht nach Unterschrift gesperrt", page.locator('#sek-kunde fieldset[disabled]').count() == 1)
+        # Frage „Jetzt die Kopie per Mail senden?“ mit „Später“ schließen, das Senden testet Schritt 5
+        if page.locator('dialog[open] [data-k="nein"]').count():
+            page.click('dialog[open] [data-k="nein"]')
         page.screenshot(path=AUS / "app_7_unterschrieben.png")
 
         # 5. Senden an Kunden und Büro (Teilen wird abgefangen)

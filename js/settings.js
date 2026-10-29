@@ -12,6 +12,8 @@ export const STANDARD = {
   nrNaechste: 1,
   takt: 15,
   ust: 19,
+  lager: 'Pollhorner Hauptdeich 8b, 21107 Hamburg',   // Start der Anfahrt für den km-Vorschlag (Betriebsstätte, Firma/firma.md)
+  lagerKoord: null,
   spruch: 'Ihr Projekt. Unser Anspruch.',
   fuss1: 'Cool Control, Pollhorner Hauptdeich 8b, 21107 Hamburg',
   fuss2: 'Hamburger Sparkasse IBAN:DE34200505501504610070 BIC:HASPDEHHXXX',

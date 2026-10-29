@@ -1,9 +1,11 @@
 // Zeiten rechnen und den Rechnungsvorschlag bauen. Die Rechnung selbst entsteht in FastBill.
 
-import { dauer, aufrunden, parseZahl } from './util.js';
+import { dauer, aufrunden, parseZahl, minutenAus, hhmm } from './util.js';
 
-// Minuten einer Zeitzeile nach Pause, auf den Takt aufgerundet
+// Minuten einer Zeitzeile nach Pause, auf den Takt aufgerundet.
+// Fahrtzeilen (aus fahrtZeilen) bringen ihre Minuten schon mit.
 export function zeitMinuten(z, takt) {
+  if (z.minuten !== undefined) return aufrunden(z.minuten, takt);
   const roh = dauer(z.von, z.bis);
   if (roh === null) return 0;
   const netto = roh - (parseZahl(z.pause) || 0);
@@ -11,15 +13,52 @@ export function zeitMinuten(z, takt) {
   return aufrunden(netto, takt);
 }
 
+// An- und Abfahrt: Volkan trägt nur Minuten ein (bericht.fahrt.anMin / abMin). Die App rechnet daraus,
+// wann es losging (Arbeitsbeginn minus Anfahrt) und wann die Rückfahrt endete (Arbeitsende plus Abfahrt).
+// Jede Person mit Zeiten im Bericht bekommt beide Fahrten, denn alle fahren mit (Volkan 29.10.2026).
+export function fahrtZeilen(bericht) {
+  const f = bericht.fahrt || {};
+  const an = parseZahl(f.anMin) || 0;
+  const ab = parseZahl(f.abMin) || 0;
+  if (an <= 0 && ab <= 0) return [];
+  const zeiten = (bericht.zeiten || []).filter((z) => (z.von || z.bis) && z.art !== 'Fahrt');
+  const personen = [...new Set(zeiten.map((z) => z.person || 'Monteur'))];
+  if (!personen.length) personen.push('Monteur');
+  const zeilen = [];
+  for (const p of personen) {
+    const eigene = zeiten.filter((z) => (z.person || 'Monteur') === p);
+    const starts = eigene.map((z) => minutenAus(z.von)).filter((m) => m !== null);
+    const enden = eigene.map((z) => minutenAus(z.bis)).filter((m) => m !== null);
+    const beginn = starts.length ? Math.min(...starts) : null;
+    const ende = enden.length ? Math.max(...enden) : null;
+    if (an > 0) zeilen.push({ id: `fahrt-an-${p}`, person: p, art: 'Anfahrt', von: beginn === null ? '' : hhmm(beginn - an), bis: beginn === null ? '' : hhmm(beginn), pause: '', minuten: an, fahrt: true });
+    if (ab > 0) zeilen.push({ id: `fahrt-ab-${p}`, person: p, art: 'Abfahrt', von: ende === null ? '' : hhmm(ende), bis: ende === null ? '' : hhmm(ende + ab), pause: '', minuten: ab, fahrt: true });
+  }
+  return zeilen;
+}
+
+// Alle Zeilen für Bericht und Abrechnung: eingetragene Zeiten plus errechnete Fahrten
+export function alleZeilen(bericht) {
+  return [...(bericht.zeiten || []), ...fahrtZeilen(bericht)];
+}
+
+// Für den Bericht je Person geordnet: Anfahrt, Arbeitszeiten, Abfahrt
+export function zeilenGeordnet(bericht) {
+  const alle = alleZeilen(bericht).filter((z) => z.von || z.bis);
+  const personen = [...new Set(alle.map((z) => z.person || 'Monteur'))];
+  const rang = (z) => (z.art === 'Anfahrt' ? 0 : z.art === 'Abfahrt' ? 2 : 1);
+  return personen.flatMap((p) => alle.filter((z) => (z.person || 'Monteur') === p).sort((a, b) => rang(a) - rang(b)));
+}
+
 export function summeMinuten(bericht, takt, filter = () => true) {
-  return (bericht.zeiten || []).filter(filter).reduce((s, z) => s + zeitMinuten(z, takt), 0);
+  return alleZeilen(bericht).filter(filter).reduce((s, z) => s + zeitMinuten(z, takt), 0);
 }
 
 const istHelfer = (z) => String(z.person || '').includes('Helfer');
 
 // Wie viele Monteure / Helfer laut Zeiten vor Ort waren (jede Person hat eigene Zeilen)
 export function personal(bericht) {
-  const z = (bericht.zeiten || []).filter((x) => x.von || x.bis);
+  const z = alleZeilen(bericht).filter((x) => x.von || x.bis);
   const monteure = new Set(z.filter((x) => !istHelfer(x)).map((x) => x.person || 'Monteur')).size;
   const helfer = new Set(z.filter(istHelfer).map((x) => x.person)).size;
   return { monteure, helfer };

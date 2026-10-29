@@ -3,7 +3,7 @@
 // Freiwillige Felder erscheinen nur, wenn etwas eingetragen ist.
 
 import { datumDe, zeitstempelDe, zahl, menge, slug, blobZuDataUrl, parseZahl } from './util.js';
-import { zeitMinuten, summeMinuten, personal, personalText } from './abrechnung.js';
+import { zeitMinuten, summeMinuten, personal, personalText, zeilenGeordnet } from './abrechnung.js';
 import { LISTEN } from './settings.js';
 
 const BLAU = [0, 113, 188];
@@ -443,7 +443,7 @@ export async function berichtPdf(bericht, fotos, einst, basis = document.baseURI
   }
 
   const takt = Number(einst.takt) || 0;
-  const zeiten = (bericht.zeiten || []).filter((z) => z.von || z.bis);
+  const zeiten = zeilenGeordnet(bericht);
   if (zeiten.length) {
     s.ueberschrift('Arbeitszeiten', (zeiten.length + 2) * 6);
     const zeilen = zeiten.map((z) => [
@@ -531,7 +531,7 @@ export function rechnungsdaten(bericht, einst, pos, sum) {
     erzeugt: new Date().toISOString(),
     bericht: {
       ...rest,
-      zeiten: (bericht.zeiten || []).map((z) => ({ ...z, minutenAbgerechnet: zeitMinuten(z, takt) })),
+      zeiten: zeilenGeordnet(bericht).map((z) => ({ ...z, minutenAbgerechnet: zeitMinuten(z, takt) })),
       unterschrift: unterschrift ? { name: unterschrift.name, zeit: unterschrift.zeit } : null,
     },
     abrechnung: {

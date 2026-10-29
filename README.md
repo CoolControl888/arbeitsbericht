@@ -2,13 +2,13 @@
 
 Web-App für Cool Control, die am Android wie eine App auf dem Startbildschirm liegt. Beim Kunden erfasst Volkan Kunde, Anlage/Gerät, Arbeiten, Zeiten, Material, Kältemittel und Dichtheitskontrolle, Fotos und die Unterschrift des Kunden. Daraus entsteht ein PDF im Stil der Rechnung (Schreibmaschinenschrift, Logo rechts mit Spruch, ganz leichte Linien), das direkt an den Kunden geht. Freiwillige Felder (Seriennummer, Kältemittel, Einsatzort, Ansprechpartner, Auftragsnummer …) stehen nur im Bericht, wenn etwas eingetragen ist. Unterschreibt nur der Kunde, mit Namen in Druckbuchstaben. Fürs Büro gibt es dazu die Rechnungsdaten, aus denen Claude den Rechnungsentwurf für FastBill vorbereitet.
 
-Stand 22.10.2026, Version 1.5.0 (Abgleich zwischen Handy, Lenovo und Tablet über Google Drive).
+Stand 29.10.2026, Version 1.6.0 (Abgleich zwischen Handy, Lenovo und Tablet über Google Drive). **Seit 1.6.0:** Fahrtzeit als An- und Abfahrt in Minuten (die App rechnet die Uhrzeiten), Anfahrt-Abrechnung per Antippen (Hamburg IB / AB / gefahrene km / keine), merkt sich je Kunde die zuletzt gewählte Anfahrt, und bei „gefahrene km“ kommt die Straßenstrecke Lager → Kunde (hin und zurück) als Vorschlag ins km-Feld (OpenStreetMap, Lageradresse in den Einstellungen). **Seit 1.5.4 geht jeder unterschriebene Bericht automatisch als PDF ins Büro** (Volkan 29.10.2026: „sodass ich es nicht im handy extra schicken muss“): Die App legt nach der Unterschrift die Kopie mit `an: "buero"` in den Drive-Briefkasten, `.claude/scripts/arbeitsbericht_versand.py` auf dem HP legt sie in `G:\Meine Ablage\Serviceberichte\` ab (ohne Mail) und quittiert; das Büro-Fenster (`App-Buero`) findet den Bericht dort und rechnet die Rechnungsdaten selbst. „Ins Büro“ bleibt als Handweg für den Fall, dass der Abgleich aus ist.
 
 ## Ablauf beim Kunden
 
 1. **Neuer Arbeitsbericht** antippen. Die Nummer (AB-2026-001 …) vergibt die App, unabhängig von FastBill.
 2. **Kunde** eintragen. Bekannte Kunden schlägt die App vor und ergänzt Adresse, Telefon, E-Mail. Bekannte Anlagen des Kunden lassen sich übernehmen.
-3. **Anlage / Gerät**, **Einsatz** (Art antippen), **Zeiten** („jetzt“ setzt die Uhrzeit), **Arbeiten** (Textbausteine antippen oder über das Tastatur-Mikrofon diktieren), **Material**, **Kältemittel und Dichtheitskontrolle**, **Befund**.
+3. **Anlage / Gerät**, **Einsatz** (Art antippen), **Zeiten** („jetzt“ setzt die Uhrzeit; Fahrtzeit nur als Minuten bei „Anfahrt min“ und „Abfahrt min“, die App rechnet daraus, wann es losging und wann du zurück warst; Anfahrt-Abrechnung antippen, die App schlägt vor, was beim Kunden zuletzt gewählt war, und bei „gefahrene km“ die Strecke Lager → Kunde), **Arbeiten** (Textbausteine antippen oder über das Tastatur-Mikrofon diktieren), **Material**, **Kältemittel und Dichtheitskontrolle**, **Befund**.
 4. **Prüfungen & Messwerte** (freiwillig): Prüfpunkte antippen zum Abhaken, Messwerte vorher/nachher eintragen (Drücke, Überhitzung, Unterkühlung, Heißgas, Strom, Temperaturen). Im Bericht stehen nur abgehakte Punkte und ausgefüllte Werte. Die Checkliste lässt sich in den Einstellungen anpassen.
 5. **Fotos**: aufnehmen oder aus der Galerie, mit Beschreibung. Typenschild nicht vergessen.
 5. **Unterschrift**: Der Kunde sieht eine Zusammenfassung, unterschreibt mit dem Finger und trägt seinen Namen ein. Danach ist der Bericht gesperrt („Bericht wieder bearbeiten“ entfernt die Unterschrift).
@@ -24,6 +24,8 @@ Alles wird beim Tippen automatisch gespeichert und funktioniert auch ohne Netz (
 Der Abschnitt **Abrechnung (intern)** zeigt den Rechnungsvorschlag. Er steht **nicht** im PDF für den Kunden.
 
 - Arbeitszeit Monteur × Stundensatz, Helfer × Helfersatz, Anfahrt aus dem Katalog, Material mit deinem VK-Preis, gefülltes Kältemittel je kg.
+- An- und Abfahrt zählen als Arbeitszeit, für jede Person mit Zeiten im Bericht (alle fahren mit). Im Bericht stehen sie je Person als Zeilen „Anfahrt“ und „Abfahrt“ mit errechneten Uhrzeiten.
+- km-Vorschlag: Adresse des Kunden und Lageradresse werden über OpenStreetMap (Nominatim) gesucht, die Straßenstrecke rechnet der öffentliche OSRM-Server. Einmal je Kunde mit Internet, danach gemerkt (`entfernungKm` beim Kunden). Bei Fehlern steht der Grund unter dem km-Feld, dann selbst eintragen.
 - Zeiten werden im eingestellten Takt aufgerundet (Start: 15 Minuten).
 - Fehlt ein Preis, steht dort `[offen]`. Nichts wird geraten.
 - Die Rechnungsnummer vergibt FastBill.

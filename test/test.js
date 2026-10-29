@@ -1,8 +1,8 @@
 // Automatische Tests: Rechnen, Speichern, PDF. Alle Namen sind erfunden (Musterdaten).
-import { parseZahl, dauer, aufrunden, slug, menge } from '../js/util.js';
+import { parseZahl, dauer, aufrunden, slug, menge, hhmm } from '../js/util.js';
 import { db } from '../js/db.js';
 import { STANDARD } from '../js/settings.js';
-import { positionen, summen, summeMinuten } from '../js/abrechnung.js';
+import { positionen, summen, summeMinuten, fahrtZeilen, zeilenGeordnet } from '../js/abrechnung.js';
 import { berichtPdf, rechnungsdaten, dateiname, pdfText } from '../js/pdf.js';
 import { Unterschrift } from '../js/signature.js';
 import { verkleinern } from '../js/photos.js';
@@ -95,15 +95,31 @@ async function main() {
   pruefe('Minuten gesamt (Takt 15)', summeMinuten(b, 15), 30 + 150 + 105);
   const pos = positionen(b, einst);
   pruefe('Positionen', pos.map((p) => [p.bezeichnung, p.menge, p.preis]), [
-    ['Arbeitszeit Servicetechniker + Fahrtzeit', 3, 91.5],
+    ['Arbeitszeit Servicetechniker + Fahrtzeit', 3, 91],
     ['Montagehelfer Servicetechniker 2', 1.75, 59],
-    ['Fahrzeugkosten pauschal AB1 Hamburg', 1, 49],
+    ['Fahrzeugkosten Hamburg AB', 1, 120],
     ['Verdampferlüftermotor 10 W', 1, 38.5],
     ['Kleinmaterial / Material zur elektrischen Verdrahtung', 1, 19.9],
     ['Kabelbinder', 10, null],
     ['Kältemittel R455A', 1.2, 85],
   ]);
-  pruefe('Summen', summen(pos, 19), { netto: 587.15, ustSatz: 19, ust: 111.56, brutto: 698.71, offen: 1 });
+  pruefe('Summen', summen(pos, 19), { netto: 656.65, ustSatz: 19, ust: 124.76, brutto: 781.41, offen: 1 });
+
+  // An- und Abfahrt in Minuten (seit 1.6.0): Uhrzeiten aus Arbeitsbeginn/-ende, jede Person fährt mit
+  const bf = musterBericht('test-fahrt', 'AB-2026-009');
+  bf.zeiten = bf.zeiten.filter((z) => z.art !== 'Fahrt');
+  bf.fahrt = { anMin: '25', abMin: '20' };
+  pruefe('hhmm negativ', hhmm(-30), '23:30');
+  pruefe('Fahrtzeilen', fahrtZeilen(bf).map((z) => [z.person, z.art, z.von, z.bis, z.minuten]), [
+    ['Monteur', 'Anfahrt', '07:35', '08:00', 25],
+    ['Monteur', 'Abfahrt', '10:20', '10:40', 20],
+    ['Helfer', 'Anfahrt', '07:35', '08:00', 25],
+    ['Helfer', 'Abfahrt', '10:00', '10:20', 20],
+  ]);
+  pruefe('Minuten mit Fahrt (Takt 15)', summeMinuten(bf, 15), 150 + 30 + 30 + 105 + 30 + 30);
+  pruefe('Reihenfolge im Bericht', zeilenGeordnet(bf).map((z) => z.art), ['Anfahrt', 'Arbeit', 'Abfahrt', 'Anfahrt', 'Arbeit', 'Abfahrt']);
+  pruefe('Fahrt ohne Zeiten', fahrtZeilen({ zeiten: [], fahrt: { anMin: '10', abMin: '' } }).map((z) => [z.person, z.von, z.minuten]), [['Monteur', '', 10]]);
+  pruefe('Ohne Fahrt keine Zeilen', fahrtZeilen(b).length, 0);
   pruefe('Dateiname', dateiname(b), '2026-10-15_arbeitsbericht_ab-2026-001_sahin-doener-grill-muster.pdf');
 
   // Speicher

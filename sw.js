@@ -1,5 +1,5 @@
 // Offline-Speicher der App. Bei jeder neuen Version VERSION erhöhen, sonst lädt das Handy die alte.
-const VERSION = 'cc-ab-1.5.4';
+const VERSION = 'cc-ab-1.6.0';
 
 const DATEIEN = [
   './',
@@ -15,6 +15,7 @@ const DATEIEN = [
   'js/abrechnung.js',
   'js/pdf.js',
   'js/abgleich.js',
+  'js/entfernung.js',
   'vendor/jspdf.umd.min.js',
   'fonts/CourierPrime-Regular.ttf',
   'fonts/CourierPrime-Bold.ttf',

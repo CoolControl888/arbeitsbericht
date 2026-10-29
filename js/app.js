@@ -7,14 +7,15 @@ import { db } from './db.js';
 import { ladeEinstellungen, speichereEinstellungen, naechsteNummer, nummerNachziehen, LISTEN, STANDARD } from './settings.js';
 import { Unterschrift } from './signature.js';
 import { verkleinern } from './photos.js';
-import { zeitMinuten, summeMinuten, positionen, summen } from './abrechnung.js';
+import { zeitMinuten, summeMinuten, positionen, summen, fahrtZeilen } from './abrechnung.js';
+import { kmVorschlag } from './entfernung.js';
 import { berichtPdf, rechnungsdaten, dateiname } from './pdf.js';
 import {
   abgleichen, meta as abgleichMeta, verbunden, verbinden, verbindungLesen, trennen, merkeWeg,
   versandVormerken, wartendeVersandIds,
 } from './abgleich.js';
 
-export const VERSION = '1.5.4';
+export const VERSION = '1.6.0';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -277,6 +278,7 @@ export function leererBericht(nr) {
     anlage: { bezeichnung: '', art: '', hersteller: '', typ: '', seriennr: '', kaeltemittel: '', fuellmenge: '' },
     auftragsart: [], auftragNr: '', monteur: einst.monteur, helfer: '',
     zeiten: [{ id: uid(), person: 'Monteur', art: 'Arbeit', von: '', bis: '', pause: '' }],
+    fahrt: { anMin: '', abMin: '' },
     anfahrt: { katalogId: '', km: '' },
     arbeiten: '', material: [], kaeltemittel: [],
     dichtheit: { durchgefuehrt: 'nein', methode: '', ergebnis: '', massnahme: '' },
@@ -436,14 +438,19 @@ const SEK = {
     titel: 'Arbeitszeiten & Anfahrt',
     info: () => { const m = summeMinuten(bericht, Number(einst.takt) || 0); return m ? `${zahl(m / 60)} Std.` : ''; },
     html: () => {
-      const an = katalogNach('anfahrt', 'km').map((k) => [k.id, k.bezeichnung]);
-      const istKm = (einst.katalog || []).find((k) => k.id === bericht.anfahrt.katalogId)?.typ === 'km';
+      if (!bericht.fahrt) bericht.fahrt = { anMin: '', abMin: '' };
+      const an = katalogNach('anfahrt', 'km');
+      const gewaehlt = (einst.katalog || []).find((k) => k.id === bericht.anfahrt.katalogId);
+      const istKm = gewaehlt?.typ === 'km';
+      const kunde = kundeZuName(bericht.kunde?.name);
+      const zuletzt = kunde?.anfahrtKatalogId ? (einst.katalog || []).find((k) => k.id === kunde.anfahrtKatalogId) : null;
+      const kurz = (k) => k.bezeichnung.replace(/^Fahrzeugkosten\s+/i, '') + (k.preis === null || k.preis === undefined ? '' : ` ${zahl(k.preis, 2)} €${k.typ === 'km' ? '/km' : ''}`);
       return `
         ${bericht.zeiten.map((z, i) => `
           <div class="zeile" data-i="${i}">
-            <div class="reihe3">
+            <div class="${z.art === 'Fahrt' ? 'reihe3' : 'reihe2'}">
               ${auswahl('Person', `zeiten.${i}.person`, LISTEN.personen)}
-              ${auswahl('Art', `zeiten.${i}.art`, ['Arbeit', 'Fahrt'])}
+              ${z.art === 'Fahrt' ? auswahl('Art', `zeiten.${i}.art`, ['Arbeit', 'Fahrt']) : ''}
               ${feld('Pause min', `zeiten.${i}.pause`, { modus: 'numeric', ph: '0' })}
             </div>
             <div class="reihe2">${zeitFeld('Von', `zeiten.${i}.von`)}${zeitFeld('Bis', `zeiten.${i}.bis`)}</div>
@@ -456,10 +463,21 @@ const SEK = {
           <button type="button" class="btn klein" data-aktion="zweite-person" data-person="Helfer">${ICON.plus} Helfer, gleiche Zeiten</button>
         </div>
         <p class="hinweis-klein">Jede Person bekommt eigene Zeilen. So steht im Bericht, wie viele vor Ort waren, und jede Stunde wird abgerechnet.</p>
+        <h3 class="unter">Fahrtzeit</h3>
+        <div class="reihe2">
+          ${feld('Anfahrt min', 'fahrt.anMin', { modus: 'numeric', ph: 'z. B. 30' })}
+          ${feld('Abfahrt min', 'fahrt.abMin', { modus: 'numeric', ph: 'z. B. 30' })}
+        </div>
+        <p class="hinweis-klein" id="fahrt-info"></p>
         <p class="summe" id="zeit-summe"></p>
-        <label class="feld"><span>Anfahrt</span><select data-f="anfahrt.katalogId" data-render="zeiten">${optionen(an, bericht.anfahrt.katalogId, 'keine / nicht berechnen')}</select></label>
-        ${istKm ? feld('Gefahrene km', 'anfahrt.km', { modus: 'decimal' }) : ''}`;
+        <div class="feld"><span>Anfahrt abrechnen</span><div class="chips klein">
+          ${an.map((k) => `<button type="button" class="chip ${bericht.anfahrt.katalogId === k.id ? 'an' : ''}" data-aktion="anfahrt-wahl" data-wert="${esc(k.id)}">${esc(kurz(k))}</button>`).join('')}
+          <button type="button" class="chip ${bericht.anfahrt.katalogId ? '' : 'an'}" data-aktion="anfahrt-wahl" data-wert="">keine</button>
+        </div></div>
+        ${zuletzt ? `<p class="hinweis-klein">Zuletzt bei diesem Kunden: ${esc(kurz(zuletzt))}${bericht.anfahrt.katalogId === zuletzt.id ? ' (übernommen)' : ''}.</p>` : ''}
+        ${istKm ? `${feld('Gefahrene km (hin und zurück)', 'anfahrt.km', { modus: 'decimal' })}<p class="hinweis-klein" id="km-info"></p>` : ''}`;
     },
+    nachRender: () => kmVorschlagAnzeigen(),
   },
   arbeiten: {
     titel: 'Ausgeführte Arbeiten',
@@ -637,12 +655,49 @@ function renderBericht() {
   ansicht().onchange = beiAenderung;
   ansicht().onclick = beiKlick;
   berechnungen();
+  for (const id of REIHENFOLGE) SEK[id].nachRender?.();
 }
 
 function neuSektion(id) {
   const el = $(`#sek-${id} > .inhalt`);
   if (el) el.innerHTML = SEK[id].html();
   berechnungen();
+  if (el) SEK[id].nachRender?.();
+}
+
+// km-Vorschlag Lager → Kunde ins km-Feld, wenn „gefahrene km“ abgerechnet wird und das Feld leer ist
+let kmLauf = 0;
+async function kmVorschlagAnzeigen() {
+  const info = $('#km-info');
+  if (!info || !bericht) return;
+  const kunde = kundeZuName(bericht.kunde?.name);
+  const adresse = [bericht.kunde?.strasse, bericht.kunde?.plzOrt].map((x) => String(x || '').trim()).filter(Boolean).join(', ');
+  if (!adresse) { info.textContent = 'Für einen km-Vorschlag Straße und PLZ Ort beim Kunden eintragen.'; return; }
+  const ziel = kunde || { ...bericht.kunde };
+  const lauf = ++kmLauf;
+  info.textContent = Number.isFinite(ziel.entfernungKm) ? '' : 'Entfernung Lager → Kunde wird berechnet …';
+  let v;
+  try {
+    v = await kmVorschlag(ziel, einst, { speichern: () => speichereEinstellungen(einst) });
+  } catch (e) {
+    if (lauf !== kmLauf) return;
+    info.textContent = `Kein km-Vorschlag: ${e.message || e}. Bitte selbst eintragen.`;
+    return;
+  }
+  if (lauf !== kmLauf || !$('#km-info')) return;
+  if (!v) { info.textContent = navigator.onLine ? '' : 'Kein Netz: km bitte selbst eintragen, Vorschlag kommt beim nächsten Mal.'; return; }
+  if (v.quelle === 'berechnet' && kunde) { kunde.geaendert = new Date().toISOString(); await db.put('kunden', kunde); }
+  const text = `Vorschlag ${v.km} km: 2 × ${zahl(v.einfach, 1)} km Lager → Kunde (OpenStreetMap, Straßenstrecke).`;
+  const feldKm = $('[data-f="anfahrt.km"]');
+  if (!String(bericht.anfahrt.km || '').trim()) {
+    bericht.anfahrt.km = String(v.km);
+    if (feldKm) feldKm.value = bericht.anfahrt.km;
+    geaendert();
+    berechnungen();
+    info.textContent = `${text} Übernommen, du kannst den Wert überschreiben.`;
+  } else {
+    info.textContent = text;
+  }
 }
 
 function berechnungen() {
@@ -658,8 +713,21 @@ function berechnungen() {
   const gesamt = $('#zeit-summe');
   if (gesamt) {
     const m = summeMinuten(bericht, takt);
-    const fahrt = summeMinuten(bericht, takt, (z) => z.art === 'Fahrt');
+    const fahrt = summeMinuten(bericht, takt, (z) => z.fahrt || z.art === 'Fahrt');
     gesamt.textContent = m ? `Gesamt ${zahl(m / 60)} Std.${fahrt ? ` (davon Fahrt ${zahl(fahrt / 60)})` : ''}${takt ? ` · ${takt}-Min.-Takt` : ''}` : '';
+  }
+  const fi = $('#fahrt-info');
+  if (fi) {
+    const f = fahrtZeilen(bericht);
+    const erste = f.filter((z) => (z.person || 'Monteur') === (f[0]?.person || 'Monteur'));
+    const an = erste.find((z) => z.art === 'Anfahrt');
+    const ab = erste.find((z) => z.art === 'Abfahrt');
+    const teile = [];
+    if (an) teile.push(an.von ? `losgefahren ${an.von}, beim Kunden ${an.bis}` : 'Anfahrt: erst Arbeitsbeginn eintragen');
+    if (ab) teile.push(ab.von ? `Rückfahrt ${ab.von} bis ${ab.bis}` : 'Abfahrt: erst Arbeitsende eintragen');
+    const personen = new Set(f.map((z) => z.person || 'Monteur')).size;
+    if (teile.length && personen > 1) teile.push(`gilt für ${personen} Personen`);
+    fi.textContent = teile.length ? teile.join(' · ') + '. Fahrtzeit zählt als Arbeitszeit.' : 'Nur Minuten eintragen. Die App rechnet daraus, wann es losging und wann du zurück warst.';
   }
   const abr = $('#abr-tabelle');
   if (abr) abr.innerHTML = abrechnungTabelle();
@@ -744,9 +812,11 @@ async function beiAenderung(e) {
     if (k) {
       bericht.kunde = { ...bericht.kunde, name: k.name };
       for (const f of ['ansprechpartner', 'telefon', 'strasse', 'plzOrt', 'email']) bericht.kunde[f] = k[f] || '';
+      anfahrtVomKunden(k);
       geaendert();
       neuSektion('kunde');
       neuSektion('anlage');
+      neuSektion('zeiten');
       toast('Kundendaten übernommen');
     }
     return;
@@ -785,6 +855,10 @@ async function beiKlick(e) {
     b.classList.toggle('an', i < 0);
     geaendert();
     berechnungen();
+  } else if (a === 'anfahrt-wahl') {
+    bericht.anfahrt.katalogId = b.dataset.wert || '';
+    geaendert();
+    neuSektion('zeiten');
   } else if (a === 'zweite-person') {
     const ziel = b.dataset.person;
     if (bericht.zeiten.some((z) => z.person === ziel)) return toast(`Für „${ziel}“ gibt es schon Zeiten.`);
@@ -870,8 +944,18 @@ function kundeErkennen() {
     if (!bericht.kunde[f] && k[f]) { bericht.kunde[f] = k[f]; neu = true; }
   }
   $$('[data-f^="kunde."]').forEach((i) => { if (i !== document.activeElement) i.value = wert(i.dataset.f); });
+  if (anfahrtVomKunden(k)) neu = true;
   neuSektion('anlage');
+  neuSektion('zeiten');
   if (neu) { geaendert(); toast('Kundendaten übernommen'); }
+}
+
+// Anfahrt so vorschlagen, wie sie beim Kunden zuletzt abgerechnet wurde (Volkan 29.10.2026: „kommt auf den Kunden an“)
+function anfahrtVomKunden(k) {
+  if (!k?.anfahrtKatalogId || bericht.anfahrt.katalogId) return false;
+  if (!(einst.katalog || []).some((x) => x.id === k.anfahrtKatalogId)) return false;
+  bericht.anfahrt.katalogId = k.anfahrtKatalogId;
+  return true;
 }
 
 async function kundeMerken() {
@@ -899,6 +983,7 @@ async function kundeMerken() {
     const i = eintrag.standorte.findIndex((s) => String(s.name || '').trim().toLowerCase() === ort.toLowerCase() && String(s.kostenstelle || '') === kst);
     if (i < 0) eintrag.standorte.push({ name: ort, kostenstelle: kst });
   }
+  if (bericht.anfahrt?.katalogId) eintrag.anfahrtKatalogId = bericht.anfahrt.katalogId;   // so wird beim Kunden abgerechnet
   eintrag.zuletzt = bericht.datum;
   if (JSON.stringify(eintrag) !== vorher) eintrag.geaendert = new Date().toISOString();
   await db.put('kunden', eintrag);
@@ -1316,6 +1401,8 @@ async function zeigeEinstellungen() {
           ${efeld('USt %', 'ust', { modus: 'decimal' })}
         </div>
         <p class="hinweis-klein">Angefangene Takte werden aufgerundet. Startwerte aus Firma/firma.md (Stand 10/2026), bitte prüfen.</p>
+        ${efeld('Lager / Start der Anfahrt (für den km-Vorschlag)', 'lager', { ph: 'Straße Nr., PLZ Ort' })}
+        <p class="hinweis-klein">Wird „gefahrene km“ abgerechnet, rechnet die App die Straßenstrecke Lager → Kunde (OpenStreetMap) und trägt hin und zurück als Vorschlag ein. Braucht einmal Internet je Kunde.</p>
         <h3 class="unter">Positionskatalog (netto)</h3>
         ${(einst.katalog || []).map((k, i) => `
           <div class="zeile">
@@ -1402,6 +1489,7 @@ async function zeigeEinstellungen() {
       else if (p === 'nrNaechste') v = Math.max(1, parseInt(v, 10) || 1);
       else if (p === 'takt') v = Number(v);
       else if (p === 'ust') v = parseZahl(v) ?? 0;
+      if (p === 'lager') einst.lagerKoord = null;   // Adresse neu, Koordinaten neu holen
       setze(einst, p, v);
     }
     einstZuletzt = p;

@@ -69,6 +69,12 @@ export function minutenAus(hhmm) {
   return h * 60 + m;
 }
 
+// Minuten seit Mitternacht zurück in "HH:MM", auch bei negativen Werten oder über 24 h
+export function hhmm(min) {
+  const m = ((Math.round(min) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
 // Dauer in Minuten zwischen zwei Uhrzeiten, auch über Mitternacht
 export function dauer(von, bis) {
   const a = minutenAus(von);
