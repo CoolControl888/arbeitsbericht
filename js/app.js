@@ -15,7 +15,7 @@ import {
   versandVormerken, wartendeVersandIds,
 } from './abgleich.js';
 
-export const VERSION = '1.6.1';
+export const VERSION = '1.6.2';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -1158,7 +1158,7 @@ async function bueroKopieVormerken(b = bericht, { still = false } = {}) {
   let p;
   const fertig = still ? () => {} : warten('PDF fürs Büro wird erstellt …');
   try { p = b === bericht ? await pdfHolen() : await pdfFuer(b); }
-  catch (e) { if (!still) toast('PDF fürs Büro ging nicht: ' + (e.message || e)); return false; }
+  catch (e) { toast(`PDF fürs Büro ging nicht (${b.nr}): ` + (e.message || e), 8000); return false; }
   finally { fertig(); }
   const angefordert = new Date().toISOString();
   await versandVormerken({
@@ -1177,7 +1177,8 @@ let nachholenLaeuft = false;
 const nachholenVersucht = new Set();   // je Sitzung ein Versuch pro Bericht, sonst Dauerschleife bei einem kaputten Bericht
 
 async function bueroNachholen() {
-  if (nachholenLaeuft || !navigator.onLine || !(await verbunden())) return;
+  if (nachholenLaeuft || !navigator.onLine) return;
+  if (!(await verbunden())) { toast('Nachholen fürs Büro: kein Drive verbunden.', 6000); return; }
   nachholenLaeuft = true;
   try {
     const wartend = await wartendeVersandIds();
