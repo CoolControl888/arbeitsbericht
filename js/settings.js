@@ -29,7 +29,7 @@ export const STANDARD = {
     'Anlage in Betrieb auf Funktion geprüft',
     'Betriebsdrücke und Temperaturen gemessen und protokolliert',
     'Verflüssiger mit Reiniger und Druckluft gereinigt',
-    'Verdampfer gereinigt, Lamellen freigelegt',
+    'Wärmetauscher gereinigt, Lamellen freigelegt',
     'Tauwasserablauf geprüft, gereinigt und durchgespült',
     'Türdichtungen auf Dichtheit und Beschädigung geprüft',
     'Regler, Sollwerte und Fühler geprüft und eingestellt',
