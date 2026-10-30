@@ -15,7 +15,7 @@ import {
   versandVormerken, wartendeVersandIds,
 } from './abgleich.js';
 
-export const VERSION = '1.6.0';
+export const VERSION = '1.6.1';
 
 const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -102,6 +102,7 @@ async function abgleichJetzt({ meldung = false } = {}) {
   const tippt = document.activeElement?.matches?.('input, textarea, select');
   if (h === '#/') { if (!tippt) zeigeListe(); } else if (h === '#/einstellungen') { if (!tippt) zeigeEinstellungen(); }
   else if (bericht && (r.berichte || r.gesendet)) berechnungen();
+  if (!r.aus && !r.offline && !r.fehler) bueroNachholen();
 }
 
 // Bericht ändern, auch wenn er gerade offen ist (z. B. Quittung „Kopie gesendet“ vom PC)
@@ -1139,7 +1140,7 @@ async function unterschreiben() {
   await speichern.sofort();
   await kundeMerken();
   renderBericht();
-  await bueroKopieVormerken();
+  if (await bueroKopieVormerken()) abgleichJetzt();
   if (await bestaetigen('Unterschrieben. Jetzt die Kopie per Mail an den Kunden senden?', 'Kopie senden', 'Später')) {
     await kundeSenden();
   } else {
@@ -1151,17 +1152,60 @@ async function unterschreiben() {
 
 // Unterschriebener Bericht geht automatisch als PDF ins Büro (Drive-Briefkasten → PC legt ihn in Serviceberichte ab),
 // „Ins Büro“ muss Volkan nicht mehr antippen (Volkan 29.10.2026). Die Rechnungsdaten rechnet das Büro-Fenster selbst.
-async function bueroKopieVormerken() {
-  if (!(await verbunden())) return;
+// b: Bericht (Standard: der offene). still: ohne Hinweise auf dem Bildschirm (Nachholen im Hintergrund).
+async function bueroKopieVormerken(b = bericht, { still = false } = {}) {
+  if (!(await verbunden())) return false;
   let p;
-  const fertig = warten('PDF fürs Büro wird erstellt …');
-  try { p = await pdfHolen(); } catch (e) { fertig(); toast('PDF fürs Büro ging nicht: ' + (e.message || e)); return; } finally { fertig(); }
+  const fertig = still ? () => {} : warten('PDF fürs Büro wird erstellt …');
+  try { p = b === bericht ? await pdfHolen() : await pdfFuer(b); }
+  catch (e) { if (!still) toast('PDF fürs Büro ging nicht: ' + (e.message || e)); return false; }
+  finally { fertig(); }
   const angefordert = new Date().toISOString();
   await versandVormerken({
-    berichtId: bericht.id, nr: bericht.nr, an: 'buero', zweck: 'buero', betreff: `Arbeitsbericht ${bericht.nr}`, text: '',
+    berichtId: b.id, nr: b.nr, an: 'buero', zweck: 'buero', betreff: `Arbeitsbericht ${b.nr}`, text: '',
     pdfName: p.name, pdfDataUrl: await blobZuDataUrl(p.blob), angefordert, geraet: einst.geraet || '',
   });
-  abgleichJetzt();
+  // am Bericht merken (gleicht sich mit ab), damit das Nachholen die Kopie nicht ein zweites Mal anfordert
+  await berichtAendern(b.id, (x) => { x.bueroAngefordert = angefordert; });
+  return true;
+}
+
+// Unterschriebene Berichte, die noch nie im Büro waren (vor Version 1.5.4 unterschrieben, oder die Büro-Kopie
+// ging damals schief), gehen nach jedem Abgleich von allein nach (Volkan 30.10.2026: „automatisch synchro“).
+// Jedes Gerät holt nur die Berichte mit seiner eigenen Nummer nach, damit Handy und Lenovo nicht beide dasselbe PDF schicken.
+let nachholenLaeuft = false;
+const nachholenVersucht = new Set();   // je Sitzung ein Versuch pro Bericht, sonst Dauerschleife bei einem kaputten Bericht
+
+async function bueroNachholen() {
+  if (nachholenLaeuft || !navigator.onLine || !(await verbunden())) return;
+  nachholenLaeuft = true;
+  try {
+    const wartend = await wartendeVersandIds();
+    const offen = (await db.alle('berichte')).filter((b) => b.status === 'unterschrieben' && !b.geteiltBuero
+      && !b.bueroAngefordert && !wartend.has(b.id) && !nachholenVersucht.has(b.id) && eigeneNummer(b.nr));
+    let n = 0;
+    for (const b of offen) {
+      nachholenVersucht.add(b.id);
+      if (await bueroKopieVormerken(b, { still: true })) n++;
+    }
+    if (n) {
+      toast(n === 1 ? `Bericht ${offen[0].nr} geht nachträglich ins Büro.` : `${n} Berichte gehen nachträglich ins Büro.`);
+      abgleichPlanen(500);
+    }
+  } finally { nachholenLaeuft = false; }
+}
+
+// Nummer dieses Geräts? Handy AB-2026-005, Lenovo AB-2026-L003 (Kürzel aus den Einstellungen)
+function eigeneNummer(nr) {
+  const k = String(einst.geraet || '').trim().toUpperCase();
+  const p = (einst.nrPraefix || 'AB').replace(/[^A-Za-z0-9]/g, '\\$&');
+  return new RegExp(`^${p}-\\d{4}-${k}\\d+$`).test(nr || '');
+}
+
+// PDF eines Berichts, der nicht gerade offen ist (mit seinen Fotos aus dem Speicher)
+async function pdfFuer(b) {
+  const liste = (await db.nachIndex('fotos', 'bericht', b.id)).sort((x, y) => x.nr - y.nr);
+  return { blob: await berichtPdf(b, liste, einst), name: dateiname(b) };
 }
 
 async function pdfHolen() {

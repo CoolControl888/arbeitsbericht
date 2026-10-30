@@ -3,7 +3,7 @@
 Voraussetzung: tools/testserver.py läuft. Aufruf aus dem App-Ordner:
     python tools/test_abgleich.py
 Prüft: Bericht vom Handy erscheint am Lenovo, Nummern je Gerät, Kopie an Kunden offline vormerken,
-Auftrag im Ausgang, Quittung vom PC, Löschen auf allen Geräten, Einstellungen ohne Gerätewerte.
+Auftrag im Ausgang (Kunde + Büro), Büro-Kopie für alte Berichte nachholen, Quittung vom PC, Löschen auf allen Geräten, Einstellungen ohne Gerätewerte.
 """
 import json
 import os
@@ -154,10 +154,15 @@ def main():
         # 4. Online: Auftrag landet im Ausgang
         lctx.set_offline(False)
         t = abgleich(lenovo)
-        auftraege = list((KASTEN / "Ausgang").glob("*.json"))
-        check("Online: Auftrag im Ausgang", len(auftraege) == 1 and auftraege[0].with_suffix(".pdf").exists())
+        alle_auftraege = [(a, json.loads(a.read_text(encoding="utf-8"))) for a in (KASTEN / "Ausgang").glob("*.json")]
+        check("Online: Kopie an Kunden und Kopie ins Büro im Ausgang (seit 1.5.4)",
+              len(alle_auftraege) == 2 and all(a.with_suffix(".pdf").exists() for a, _ in alle_auftraege),
+              ", ".join(str(d.get("an")) for _, d in alle_auftraege))
+        auftraege = [a for a, d in alle_auftraege if d.get("an") != "buero"]
         auftrag = json.loads(auftraege[0].read_text(encoding="utf-8")) if auftraege else {}
         check("Auftrag an Kunden-Adresse mit Nummer", auftrag.get("an") == "kunde@example.com" and nr_lenovo in auftrag.get("betreff", ""), str(auftrag)[:200])
+        buero = [d for _, d in alle_auftraege if d.get("an") == "buero"]
+        check("Genau eine Büro-Kopie mit Nummer", len(buero) == 1 and buero[0].get("nr") == nr_lenovo, str(buero)[:200])
         check("PDF ist ein PDF", auftraege and auftraege[0].with_suffix(".pdf").read_bytes()[:5] == b"%PDF-")
         check("Liste: Kopie geht vom PC raus", "Kopie geht vom PC raus" in lenovo.inner_text(".karten"))
 
@@ -174,13 +179,36 @@ def main():
             "format": "cc-arbeitsbericht-quittung/1", "berichtId": auftrag["berichtId"], "nr": auftrag["nr"],
             "an": auftrag["an"], "angefordert": auftrag["angefordert"], "status": "gesendet", "gesendet": "2026-10-22T15:00:00+02:00",
         }), encoding="utf-8")
+        buero_datei = next(a for a, d in alle_auftraege if d.get("an") == "buero")
+        (KASTEN / "Quittungen" / (buero_datei.stem + ".json")).write_text(json.dumps({
+            "format": "cc-arbeitsbericht-quittung/1", "berichtId": buero[0]["berichtId"], "nr": buero[0]["nr"], "an": "buero", "zweck": "buero",
+            "angefordert": buero[0]["angefordert"], "status": "gesendet", "gesendet": "2026-10-22T15:00:05+02:00",
+        }), encoding="utf-8")
         abgleich(lenovo)
         lk = lenovo.inner_text(".karten")
-        check("Lenovo: an Kunden geteilt", "an Kunden geteilt" in lk, lk.replace("\n", " | ")[:200])
+        check("Lenovo: Kunde + Büro", "Kunde + Büro" in lk, lk.replace("\n", " | ")[:200])
         abgleich(handy)
         hk = handy.inner_text(".karten")
-        check("Handy sieht Lenovo-Bericht als gesendet", nr_lenovo in hk and "an Kunden geteilt" in hk, hk.replace("\n", " | ")[:200])
+        check("Handy sieht Lenovo-Bericht als Kunde + Büro", nr_lenovo in hk and "Kunde + Büro" in hk, hk.replace("\n", " | ")[:200])
         handy.screenshot(path=AUS / "abgleich_2_handy.png")
+
+        # 6b. Nachholen: ein unterschriebener Bericht ohne Büro-Kopie (vor 1.5.4) geht beim nächsten Abgleich von allein ins Büro,
+        #     aber nur vom Gerät mit der eigenen Nummer (Handy-Bericht → Handy, nicht Lenovo)
+        for a in (KASTEN / "Ausgang").glob("*.*"):
+            a.unlink()
+        handy.evaluate("""async (nr) => { const { db } = await import('./js/db.js');
+            const b = (await db.alle('berichte')).find((x) => x.nr === nr);
+            b.status = 'unterschrieben'; b.unterschrift = { name: 'Alt Unterschrieben', zeit: '2026-10-25T10:00:00.000Z' };
+            b.geaendert = new Date().toISOString(); await db.put('berichte', b); }""", nr_handy)
+        abgleich(lenovo)
+        check("Lenovo holt fremden Handy-Bericht nicht nach", not list((KASTEN / "Ausgang").glob("*.json")))
+        abgleich(handy)
+        handy.wait_for_function("document.querySelector('#toast').textContent.includes('nachträglich ins Büro')", timeout=30000)
+        handy.wait_for_timeout(1500)
+        nach = [json.loads(a.read_text(encoding="utf-8")) for a in (KASTEN / "Ausgang").glob("*.json")]
+        check("Handy holt Büro-Kopie für alten Bericht nach", len(nach) == 1 and nach[0].get("an") == "buero" and nach[0].get("nr") == nr_handy, str(nach)[:200])
+        abgleich(handy)
+        check("Nachholen nur einmal", len(list((KASTEN / "Ausgang").glob("*.json"))) == 1)
 
         # 7. Einstellungen: Text vom Handy kommt an, Gerätekürzel bleibt
         handy.goto(URL + "#/einstellungen")
